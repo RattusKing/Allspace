@@ -37,7 +37,7 @@ Transform any 2D image into a complete, explorable 3D environment with AI-powere
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/yourusername/image-to-3d-generator.git
+git clone https://github.com/RattusKing/Allspace.git
 cd image-to-3d-generator
 ```
 
@@ -337,9 +337,9 @@ The only requirement is to include the original copyright notice.
 
 ## 📧 Contact & Support
 
-- 🐛 **Issues**: [GitHub Issues](https://github.com/yourusername/image-to-3d-generator/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/yourusername/image-to-3d-generator/discussions)
-- 📖 **Wiki**: [Project Wiki](https://github.com/yourusername/image-to-3d-generator/wiki)
+- 🐛 **Issues**: [GitHub Issues](https://github.com/RattusKing/Allspace/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/RattusKing/Allspace/discussions)
+- 📖 **Wiki**: [Project Wiki](https://github.com/RattusKing/Allspace/wiki)
 
 ## ⭐ Star History
 
