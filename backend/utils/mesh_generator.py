@@ -1,11 +1,12 @@
 """
 Mesh Generation Module
-Creates 3D meshes from depth maps and images
+Creates 3D meshes from depth maps and images using trimesh (no Open3D required)
 """
 
 import numpy as np
 import cv2
-import open3d as o3d
+import trimesh
+from scipy.spatial import Delaunay
 from PIL import Image
 
 
@@ -13,7 +14,7 @@ class MeshGenerator:
     """Generates 3D meshes from 2D images and depth maps"""
 
     def __init__(self):
-        print("🔧 Initializing Mesh Generator")
+        print("🔧 Initializing Mesh Generator (trimesh-based)")
 
     def create_mesh_from_depth(self, image_path, depth_map, confidence_map=None):
         """
@@ -25,7 +26,7 @@ class MeshGenerator:
             confidence_map: Optional confidence values
 
         Returns:
-            mesh: Open3D TriangleMesh object
+            mesh: Trimesh object
             image_data: Original image data for texturing
         """
         try:
@@ -36,8 +37,8 @@ class MeshGenerator:
 
             height, width = depth_map.shape
 
-            # Create point cloud from depth map
-            point_cloud = self._depth_to_point_cloud(
+            # Create mesh directly from depth map
+            mesh = self._depth_to_mesh(
                 depth_map,
                 image,
                 width,
@@ -45,10 +46,7 @@ class MeshGenerator:
                 confidence_map
             )
 
-            # Convert to mesh
-            mesh = self._point_cloud_to_mesh(point_cloud)
-
-            print(f"✅ Generated base mesh: {len(mesh.vertices)} vertices, {len(mesh.triangles)} triangles")
+            print(f"✅ Generated base mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
 
             return mesh, image_data
 
@@ -56,9 +54,9 @@ class MeshGenerator:
             print(f"❌ Error creating mesh: {e}")
             raise
 
-    def _depth_to_point_cloud(self, depth_map, image, width, height, confidence_map=None):
+    def _depth_to_mesh(self, depth_map, image, width, height, confidence_map=None):
         """
-        Convert depth map to 3D point cloud
+        Convert depth map directly to mesh using trimesh
 
         Args:
             depth_map: 2D depth values
@@ -67,11 +65,23 @@ class MeshGenerator:
             confidence_map: Optional confidence values
 
         Returns:
-            point_cloud: Open3D PointCloud object
+            mesh: Trimesh object
         """
+        # Downsample for performance (optional)
+        downsample_factor = 1
+        if width > 1024 or height > 1024:
+            downsample_factor = 2
+        
+        if downsample_factor > 1:
+            depth_map = depth_map[::downsample_factor, ::downsample_factor]
+            image = image[::downsample_factor, ::downsample_factor]
+            if confidence_map is not None:
+                confidence_map = confidence_map[::downsample_factor, ::downsample_factor]
+            height, width = depth_map.shape
+
         # Create coordinate grids
-        x = np.linspace(0, width - 1, width)
-        y = np.linspace(0, height - 1, height)
+        x = np.arange(0, width)
+        y = np.arange(0, height)
         x_grid, y_grid = np.meshgrid(x, y)
 
         # Estimate focal length (rough approximation)
@@ -82,7 +92,7 @@ class MeshGenerator:
         cy = height / 2.0
 
         # Scale depth for better visualization
-        depth_scale = 5.0  # Adjust this for depth effect
+        depth_scale = 5.0
 
         # Convert to 3D coordinates
         z = depth_map * depth_scale
@@ -90,117 +100,116 @@ class MeshGenerator:
         y_3d = (y_grid - cy) * z / focal_length
 
         # Flatten arrays
-        points = np.stack([x_3d.flatten(), -y_3d.flatten(), -z.flatten()], axis=1)
+        vertices = np.stack([x_3d.flatten(), -y_3d.flatten(), -z.flatten()], axis=1)
 
         # Get colors from image
-        colors = image.reshape(-1, 3) / 255.0
+        vertex_colors = image.reshape(-1, 3)
 
-        # Filter points by confidence if available
+        # Filter by confidence if available
         if confidence_map is not None:
             confidence_threshold = 0.3
             valid_mask = confidence_map.flatten() > confidence_threshold
-            points = points[valid_mask]
-            colors = colors[valid_mask]
+            # Keep indices for reconstruction
+            valid_indices = np.where(valid_mask)[0]
+        else:
+            valid_indices = np.arange(len(vertices))
 
-        # Create Open3D point cloud
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(points)
-        pcd.colors = o3d.utility.Vector3dVector(colors)
+        # Create grid triangulation
+        faces = []
+        vertex_map = np.full(height * width, -1, dtype=int)
+        vertex_map[valid_indices] = np.arange(len(valid_indices))
 
-        # Remove outliers
-        pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+        filtered_vertices = vertices[valid_indices]
+        filtered_colors = vertex_colors[valid_indices]
 
-        # Estimate normals
-        pcd.estimate_normals(
-            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30)
+        # Create faces from grid
+        for i in range(height - 1):
+            for j in range(width - 1):
+                idx = i * width + j
+                
+                if confidence_map is not None:
+                    # Check if all vertices are valid
+                    if (vertex_map[idx] < 0 or 
+                        vertex_map[idx + 1] < 0 or 
+                        vertex_map[idx + width] < 0 or
+                        vertex_map[idx + width + 1] < 0):
+                        continue
+                
+                v0 = vertex_map[idx] if confidence_map is not None else idx
+                v1 = vertex_map[idx + 1] if confidence_map is not None else idx + 1
+                v2 = vertex_map[idx + width] if confidence_map is not None else idx + width
+                v3 = vertex_map[idx + width + 1] if confidence_map is not None else idx + width + 1
+
+                # Create two triangles for this quad
+                faces.append([v0, v1, v2])
+                faces.append([v1, v3, v2])
+
+        faces = np.array(faces)
+        
+        if confidence_map is not None:
+            vertices = filtered_vertices
+            vertex_colors = filtered_colors
+
+        # Remove degenerate faces (faces where vertices are too close)
+        if len(faces) > 0:
+            # Calculate face areas
+            v0 = vertices[faces[:, 0]]
+            v1 = vertices[faces[:, 1]]
+            v2 = vertices[faces[:, 2]]
+            
+            # Cross product to get face normals and areas
+            cross = np.cross(v1 - v0, v2 - v0)
+            areas = np.linalg.norm(cross, axis=1)
+            
+            # Keep faces with reasonable area
+            valid_faces = areas > 0.001
+            faces = faces[valid_faces]
+
+        # Create trimesh object
+        mesh = trimesh.Trimesh(
+            vertices=vertices,
+            faces=faces,
+            vertex_colors=vertex_colors,
+            process=False  # Don't auto-process, we'll do it manually
         )
 
-        return pcd
-
-    def _point_cloud_to_mesh(self, point_cloud):
-        """
-        Convert point cloud to triangle mesh
-
-        Args:
-            point_cloud: Open3D PointCloud
-
-        Returns:
-            mesh: Open3D TriangleMesh
-        """
-        # Use Poisson surface reconstruction
-        try:
-            mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                point_cloud,
-                depth=9,
-                width=0,
-                scale=1.1,
-                linear_fit=False
-            )
-
-            # Remove low-density vertices
-            vertices_to_remove = densities < np.quantile(densities, 0.01)
-            mesh.remove_vertices_by_mask(vertices_to_remove)
-
-        except Exception as e:
-            print(f"⚠️  Poisson reconstruction failed, using ball pivoting: {e}")
-            # Fallback to ball pivoting if Poisson fails
-            distances = point_cloud.compute_nearest_neighbor_distance()
-            avg_dist = np.mean(distances)
-            radius = 3 * avg_dist
-            mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
-                point_cloud,
-                o3d.utility.DoubleVector([radius, radius * 2])
-            )
-
         # Clean up mesh
-        mesh.remove_duplicated_vertices()
-        mesh.remove_duplicated_triangles()
-        mesh.remove_degenerate_triangles()
+        mesh.remove_duplicate_faces()
+        mesh.remove_degenerate_faces()
         mesh.remove_unreferenced_vertices()
-
-        # Compute vertex normals
-        mesh.compute_vertex_normals()
+        
+        # Fix normals
+        mesh.fix_normals()
 
         return mesh
 
     def create_textured_mesh(self, mesh, image_data):
         """
-        Apply texture to mesh using image
+        Apply texture to mesh using image (trimesh already has vertex colors)
 
         Args:
-            mesh: Open3D TriangleMesh
+            mesh: Trimesh object
             image_data: RGB image
 
         Returns:
             mesh: Textured mesh
         """
-        try:
-            # For now, we'll use vertex colors
-            # Full UV mapping would require more complex projection
-            if not mesh.has_vertex_colors():
-                # Use existing colors from point cloud or generate from normals
-                if not mesh.has_vertex_normals():
-                    mesh.compute_vertex_normals()
-
-            return mesh
-
-        except Exception as e:
-            print(f"⚠️  Error texturing mesh: {e}")
-            return mesh
+        # Trimesh already handles vertex colors well
+        return mesh
 
     def subdivide_mesh(self, mesh, iterations=1):
         """
         Subdivide mesh for smoother surface
 
         Args:
-            mesh: Input mesh
+            mesh: Input trimesh
             iterations: Number of subdivision iterations
 
         Returns:
             subdivided_mesh
         """
         for _ in range(iterations):
-            mesh = mesh.subdivide_midpoint(number_of_iterations=1)
+            mesh = mesh.subdivide()
 
         return mesh
 
@@ -209,13 +218,23 @@ class MeshGenerator:
         Apply Laplacian smoothing to mesh
 
         Args:
-            mesh: Input mesh
+            mesh: Input trimesh
             iterations: Number of smoothing iterations
 
         Returns:
             smoothed_mesh
         """
-        mesh = mesh.filter_smooth_simple(number_of_iterations=iterations)
-        mesh.compute_vertex_normals()
+        # Trimesh doesn't have built-in Laplacian smoothing
+        # We can approximate it by averaging vertex positions
+        for _ in range(iterations):
+            vertices = mesh.vertices.copy()
+            vertex_neighbors = mesh.vertex_neighbors
+            
+            for i, neighbors in enumerate(vertex_neighbors):
+                if len(neighbors) > 0:
+                    vertices[i] = np.mean(mesh.vertices[neighbors], axis=0)
+            
+            mesh.vertices = vertices
 
+        mesh.fix_normals()
         return mesh
