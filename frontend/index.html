@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image to 3D Environment Generator</title>
+    <meta name="description" content="Free, open-source tool to convert 2D images into explorable 3D environments">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>🎨 Image to 3D Environment Generator</h1>
+            <p class="subtitle">Transform 2D images into complete explorable 3D spaces</p>
+            <p class="tagline">
+                Free & Open Source • No Account Required • Export to Unity/Unreal/Blender
+            </p>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Upload Section -->
+            <section class="upload-section" id="uploadSection">
+                <div class="upload-box" id="uploadBox">
+                    <div class="upload-icon">📁</div>
+                    <h2>Drop your image here</h2>
+                    <p>or click to browse</p>
+                    <p class="file-info">Supports: JPG, PNG, WEBP, BMP, TIFF • Max 16MB</p>
+                    <input type="file" id="fileInput" accept="image/*" hidden>
+                    <button class="btn btn-primary" id="browseBtn">Browse Files</button>
+                </div>
+
+                <!-- Preview Section -->
+                <div class="preview-section hidden" id="previewSection">
+                    <div class="preview-image">
+                        <img id="previewImg" src="" alt="Preview">
+                    </div>
+                    <div class="preview-info">
+                        <h3>Image loaded</h3>
+                        <p id="fileName">filename.jpg</p>
+                        <button class="btn btn-secondary" id="changeImageBtn">Change Image</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Options Section -->
+            <section class="options-section hidden" id="optionsSection">
+                <h2>⚙️ Generation Options</h2>
+
+                <div class="option-group">
+                    <label class="option-label">
+                        <input type="checkbox" id="hallucinateCheckbox" checked>
+                        <span>Hallucinate unseen areas (generate rooms, interiors, etc.)</span>
+                    </label>
+                </div>
+
+                <div class="option-group">
+                    <label class="option-label">
+                        <input type="checkbox" id="interiorsCheckbox" checked>
+                        <span>Generate interior elements</span>
+                    </label>
+                </div>
+
+                <div class="option-group">
+                    <label>Room Complexity:</label>
+                    <select id="complexitySelect" class="select-input">
+                        <option value="low">Low (faster)</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="high">High (more detail)</option>
+                    </select>
+                </div>
+
+                <div class="option-group">
+                    <label>Wall Thickness (meters):</label>
+                    <input type="range" id="wallThicknessSlider" min="0.1" max="1.0" step="0.1" value="0.3">
+                    <span id="wallThicknessValue">0.3</span>
+                </div>
+
+                <button class="btn btn-primary btn-large" id="generateBtn">
+                    🚀 Generate 3D Environment
+                </button>
+            </section>
+
+            <!-- Progress Section -->
+            <section class="progress-section hidden" id="progressSection">
+                <h2>⚡ Processing...</h2>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <p class="progress-text" id="progressText">Uploading image...</p>
+                <p class="progress-percent" id="progressPercent">0%</p>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section hidden" id="resultsSection">
+                <h2>✅ Generation Complete!</h2>
+
+                <!-- 3D Preview -->
+                <div class="viewer-container">
+                    <div id="viewer3d" class="viewer-3d"></div>
+                    <div class="viewer-controls">
+                        <p>🖱️ Left-click + drag: Rotate • Right-click + drag: Pan • Scroll: Zoom</p>
+                    </div>
+                </div>
+
+                <!-- Download Options -->
+                <div class="download-section">
+                    <h3>📥 Download Your 3D Model</h3>
+                    <div class="download-buttons">
+                        <button class="btn btn-download" id="downloadGlbBtn">
+                            <span class="download-icon">📦</span>
+                            <div>
+                                <strong>Download GLB</strong>
+                                <small>For web viewers, Three.js</small>
+                            </div>
+                        </button>
+                        <button class="btn btn-download" id="downloadFbxBtn">
+                            <span class="download-icon">🎮</span>
+                            <div>
+                                <strong>Download FBX</strong>
+                                <small>For Unity, Unreal Engine, Blender</small>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+
+                <button class="btn btn-secondary" id="startOverBtn">Start Over</button>
+            </section>
+
+            <!-- Error Section -->
+            <section class="error-section hidden" id="errorSection">
+                <h2>❌ Error</h2>
+                <p id="errorMessage">Something went wrong</p>
+                <button class="btn btn-secondary" id="retryBtn">Try Again</button>
+            </section>
+        </main>
+
+        <!-- Info Section -->
+        <section class="info-section">
+            <h2>ℹ️ How It Works</h2>
+            <div class="info-grid">
+                <div class="info-card">
+                    <div class="info-icon">1️⃣</div>
+                    <h3>Upload Image</h3>
+                    <p>Upload any 2D image - photos, maps, concept art, etc.</p>
+                </div>
+                <div class="info-card">
+                    <div class="info-icon">2️⃣</div>
+                    <h3>AI Analysis</h3>
+                    <p>MiDaS estimates depth and analyzes scene structure</p>
+                </div>
+                <div class="info-card">
+                    <div class="info-icon">3️⃣</div>
+                    <h3>Hallucination</h3>
+                    <p>Procedurally generates unseen areas like rooms and interiors</p>
+                </div>
+                <div class="info-card">
+                    <div class="info-icon">4️⃣</div>
+                    <h3>Export</h3>
+                    <p>Download as GLB or FBX for use in your favorite 3D software</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>
+                Made with ❤️ as Free & Open Source Software
+                • <a href="https://github.com/yourusername/image-to-3d-generator" target="_blank">GitHub</a>
+                • <a href="https://github.com/yourusername/image-to-3d-generator/blob/main/LICENSE" target="_blank">MIT License</a>
+            </p>
+            <p class="tech-stack">
+                Built with Flask • Three.js • MiDaS • Open3D
+            </p>
+        </footer>
+    </div>
+
+    <!-- Three.js for 3D preview -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
+    <!-- Application Scripts -->
+    <script src="viewer.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

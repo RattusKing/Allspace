@@ -1,0 +1,20 @@
+# Render Blueprint for Image to 3D Environment Generator
+# Deploy with: "Connect Repository" on Render.com
+
+services:
+  - type: web
+    name: image-to-3d-api
+    env: python
+    region: oregon
+    buildCommand: cd backend && pip install -r requirements.txt
+    startCommand: cd backend && gunicorn -c gunicorn_config.py app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.16
+      - key: PORT
+        value: 5000
+    scaling:
+      minInstances: 1
+      maxInstances: 1
+    healthCheckPath: /
+    autoDeploy: true

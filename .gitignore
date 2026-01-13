@@ -1,0 +1,118 @@
+# Image to 3D Environment Generator - .gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# PyTorch & ML Models
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.pb
+*.onnx
+models/checkpoints/
+models/weights/
+
+# Uploaded and Generated Files
+backend/uploads/*
+backend/outputs/*
+!backend/uploads/.gitkeep
+!backend/outputs/.gitkeep
+*.glb
+*.fbx
+*.obj
+*.ply
+*.stl
+temp_*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Flask
+instance/
+.webassets-cache
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Distribution / packaging
+dist/
+build/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Node (if using any npm tools)
+node_modules/
+package-lock.json
+
+# Render deployment
+.render/
