@@ -14,32 +14,40 @@ class DepthEstimator:
 
     def __init__(self, model_type='MiDaS_small'):
         """
-        Initialize depth estimation model
+        Initialize depth estimation model (lazy loading)
 
         Args:
             model_type: 'MiDaS_small' (faster, less accurate) or 'DPT_Large' (slower, more accurate)
         """
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print(f"🔧 Initializing Depth Estimator on {self.device}")
+        self.model_type = model_type
+        self.model = None
+        self.transform = None
+        print(f"🔧 Depth Estimator ready (model will load on first use)")
 
+    def _ensure_model_loaded(self):
+        """Lazy load the model only when needed to save startup memory"""
+        if self.model is not None:
+            return  # Already loaded
+
+        print(f"📥 Loading MiDaS model (first time, ~100MB download)...")
         try:
             # Load MiDaS model - using small version for Render free tier
-            self.model = torch.hub.load('intel-isl/MiDaS', model_type, pretrained=True)
+            self.model = torch.hub.load('intel-isl/MiDaS', self.model_type, pretrained=True, trust_repo=True)
             self.model.to(self.device)
             self.model.eval()
 
             # Load transforms
-            midas_transforms = torch.hub.load('intel-isl/MiDaS', 'transforms')
-            if model_type == 'DPT_Large' or model_type == 'DPT_Hybrid':
+            midas_transforms = torch.hub.load('intel-isl/MiDaS', 'transforms', trust_repo=True)
+            if self.model_type == 'DPT_Large' or self.model_type == 'DPT_Hybrid':
                 self.transform = midas_transforms.dpt_transform
             else:
                 self.transform = midas_transforms.small_transform
 
-            print(f"✅ Depth model loaded: {model_type}")
+            print(f"✅ Depth model loaded: {self.model_type}")
 
         except Exception as e:
-            print(f"⚠️  Error loading model: {e}")
-            print("📥 Attempting to download model...")
+            print(f"❌ Error loading model: {e}")
             raise
 
     def estimate_depth(self, image_path):
@@ -53,6 +61,9 @@ class DepthEstimator:
             depth_map: Normalized depth map (numpy array)
             confidence_map: Confidence/uncertainty map
         """
+        # Lazy load model on first use
+        self._ensure_model_loaded()
+
         try:
             # Load image
             img = cv2.imread(image_path)
