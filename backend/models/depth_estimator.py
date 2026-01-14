@@ -3,10 +3,15 @@ Depth Estimation Module
 Uses MiDaS or Depth Anything for monocular depth estimation
 """
 
+import os
 import cv2
 import numpy as np
 import torch
 from PIL import Image
+
+# Workaround for PyTorch hub Authorization bug
+os.environ['TORCH_HOME'] = os.path.expanduser('~/.cache/torch')
+torch.hub._validate_not_a_forked_repo = lambda a, b, c: True
 
 
 class DepthEstimator:
