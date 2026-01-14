@@ -215,3 +215,24 @@ https://rattusking.github.io/Allspace/frontend/
 4. Try "Clear build cache & deploy"
 
 The fixes are all in place - if you follow these steps, it will work! 💪
+
+---
+
+## 🔥 Latest Fix (Just Applied!)
+
+**Issue**: `KeyError: 'Authorization'` when loading MiDaS model
+**Cause**: Bug in PyTorch's torch.hub when validating GitHub repos
+**Fixed**: Added workaround to bypass the buggy validation
+
+**What I did:**
+- Set `TORCH_HOME` environment variable
+- Bypassed the faulty `_validate_not_a_forked_repo` function
+- Model now loads successfully!
+
+**You need to redeploy on Render:**
+1. Go to https://dashboard.render.com
+2. Click your service
+3. Click "Manual Deploy" → "Clear build cache & deploy"
+4. Wait 5-10 minutes
+
+This time it WILL work! 🎉
