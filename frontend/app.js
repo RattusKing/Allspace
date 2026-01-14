@@ -6,7 +6,7 @@
 // Configuration
 const API_URL = window.location.hostname === 'localhost'
     ? 'http://localhost:5000'
-    : 'https://your-backend-url.onrender.com'; // Update with your Render URL
+    : 'https://allspace.onrender.com';
 
 // State
 let currentJobId = null;
