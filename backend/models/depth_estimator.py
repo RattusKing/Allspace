@@ -89,25 +89,44 @@ class DepthEstimator:
             print("   🔄 Fusing depth estimates...")
             depth_map = np.zeros_like(depth_maps[0], dtype=np.float32)
             for depth, weight in zip(depth_maps, weights):
+                # Ensure no NaN or Inf values
+                depth = np.nan_to_num(depth, nan=0.0, posinf=1.0, neginf=0.0)
                 depth_map += depth * weight
 
             # Normalize final depth map
             depth_map = self._normalize(depth_map)
 
+            # Validate depth map has variation
+            if np.isnan(depth_map).any() or np.isinf(depth_map).any():
+                print("   ⚠️  NaN/Inf detected, cleaning...")
+                depth_map = np.nan_to_num(depth_map, nan=0.5, posinf=1.0, neginf=0.0)
+
+            depth_range = depth_map.max() - depth_map.min()
+            if depth_range < 0.01:  # No variation
+                print("   ⚠️  Depth map has no variation, using simple gradient...")
+                # Fallback: simple vertical gradient
+                y_coords = np.linspace(0, 1, height)
+                depth_map = np.tile(y_coords[:, np.newaxis], (1, width))
+                depth_map = self._normalize(depth_map)
+
             # Post-processing: bilateral filter to smooth while preserving edges
-            depth_map = cv2.bilateralFilter(
-                depth_map.astype(np.float32),
-                d=9,
-                sigmaColor=75,
-                sigmaSpace=75
-            )
-            depth_map = self._normalize(depth_map)
+            try:
+                depth_map = cv2.bilateralFilter(
+                    depth_map.astype(np.float32),
+                    d=9,
+                    sigmaColor=75,
+                    sigmaSpace=75
+                )
+                depth_map = self._normalize(depth_map)
+            except Exception as e:
+                print(f"   ⚠️  Bilateral filter failed: {e}, skipping...")
 
             # Calculate confidence map
             confidence_map = self._calculate_confidence(depth_map, depth_maps)
 
             print(f"✅ Depth map generated: {depth_map.shape}")
             print(f"   Range: {depth_map.min():.3f} - {depth_map.max():.3f}")
+            print(f"   Mean: {depth_map.mean():.3f}, Std: {depth_map.std():.3f}")
 
             return depth_map, confidence_map
 
