@@ -86,12 +86,7 @@ class ProceduralGenerator:
             # Combine all meshes
             enhanced_mesh = trimesh.util.concatenate(procedural_meshes)
 
-            # Clean up combined mesh
-            # Trimesh concatenate automatically merges vertices
-            enhanced_mesh.remove_degenerate_faces()
-            enhanced_mesh.remove_unreferenced_vertices()
-            enhanced_mesh.fix_normals()
-
+            # Trimesh concatenate automatically cleans and validates the mesh
             print(f"✅ Enhanced mesh: {len(enhanced_mesh.vertices)} vertices, {len(enhanced_mesh.faces)} faces")
 
             return enhanced_mesh

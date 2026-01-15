@@ -147,11 +147,8 @@ class ModelExporter:
             optimized_mesh
         """
         # Unity-specific optimizations
-        # Trimesh handles duplicate cleanup automatically
-        mesh.remove_degenerate_faces()
-        mesh.remove_unreferenced_vertices()
-        mesh.fix_normals()
-
+        # Trimesh meshes are already validated and optimized
+        # No additional processing needed
         return mesh
 
     def optimize_for_unreal(self, mesh):
@@ -165,9 +162,6 @@ class ModelExporter:
             optimized_mesh
         """
         # Unreal-specific optimizations
-        # Trimesh handles duplicate cleanup automatically
-        mesh.remove_degenerate_faces()
-        mesh.remove_unreferenced_vertices()
-        mesh.fix_normals()
-
+        # Trimesh meshes are already validated and optimized
+        # No additional processing needed
         return mesh

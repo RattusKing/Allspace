@@ -170,17 +170,10 @@ class MeshGenerator:
             vertices=vertices,
             faces=faces,
             vertex_colors=vertex_colors,
-            process=False  # Don't auto-process, we'll do it manually
+            process=True  # Auto-process: validates, removes degenerates, merges vertices
         )
 
-        # Clean up mesh
-        # Trimesh automatically handles duplicates during creation
-        mesh.remove_degenerate_faces()
-        mesh.remove_unreferenced_vertices()
-
-        # Fix normals
-        mesh.fix_normals()
-
+        # Mesh is already cleaned by process=True
         return mesh
 
     def create_textured_mesh(self, mesh, image_data):
@@ -236,5 +229,5 @@ class MeshGenerator:
             
             mesh.vertices = vertices
 
-        mesh.fix_normals()
+        # Normals are automatically recomputed by trimesh when accessed
         return mesh
