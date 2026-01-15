@@ -18,8 +18,8 @@ class DepthEstimator:
         """Initialize depth estimator with HF API"""
         self.api_token = os.getenv('HF_API_TOKEN')
         
-        # Hugging Face model endpoint
-        self.api_url = "https://api-inference.huggingface.co/models/Intel/dpt-large"
+        # Hugging Face model endpoint (updated to new router endpoint)
+        self.api_url = "https://router.huggingface.co/models/Intel/dpt-large"
         
         if not self.api_token:
             print("⚠️  WARNING: HF_API_TOKEN not found in environment")
