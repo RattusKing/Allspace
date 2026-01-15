@@ -174,10 +174,10 @@ class MeshGenerator:
         )
 
         # Clean up mesh
-        mesh.remove_duplicate_faces()
+        # Trimesh automatically handles duplicates during creation
         mesh.remove_degenerate_faces()
         mesh.remove_unreferenced_vertices()
-        
+
         # Fix normals
         mesh.fix_normals()
 
