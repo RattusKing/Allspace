@@ -107,10 +107,17 @@ class MeshGenerator:
 
         # Filter by confidence if available
         if confidence_map is not None:
-            confidence_threshold = 0.3
+            # Use a lower threshold for custom depth estimation
+            confidence_threshold = 0.1
             valid_mask = confidence_map.flatten() > confidence_threshold
             # Keep indices for reconstruction
             valid_indices = np.where(valid_mask)[0]
+
+            # If too many vertices filtered out, disable filtering
+            if len(valid_indices) < (len(vertices) * 0.1):  # Less than 10% vertices kept
+                print("⚠️  Confidence filtering too aggressive, disabling...")
+                valid_indices = np.arange(len(vertices))
+                confidence_map = None  # Disable confidence filtering for faces too
         else:
             valid_indices = np.arange(len(vertices))
 
