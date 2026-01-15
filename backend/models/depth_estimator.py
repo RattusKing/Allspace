@@ -1,63 +1,37 @@
 """
 Depth Estimation Module
-Uses MiDaS or Depth Anything for monocular depth estimation
+Uses Hugging Face Inference API for MiDaS depth estimation
 """
 
 import os
 import cv2
 import numpy as np
-import torch
+import requests
 from PIL import Image
-
-# Workaround for PyTorch hub Authorization bug
-os.environ['TORCH_HOME'] = os.path.expanduser('~/.cache/torch')
-torch.hub._validate_not_a_forked_repo = lambda a, b, c: True
+import io
 
 
 class DepthEstimator:
-    """Estimates depth from 2D images using pre-trained models"""
+    """Estimates depth from 2D images using Hugging Face Inference API"""
 
-    def __init__(self, model_type='MiDaS_small'):
-        """
-        Initialize depth estimation model (lazy loading)
-
-        Args:
-            model_type: 'MiDaS_small' (faster, less accurate) or 'DPT_Large' (slower, more accurate)
-        """
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model_type = model_type
-        self.model = None
-        self.transform = None
-        print(f"🔧 Depth Estimator ready (model will load on first use)")
-
-    def _ensure_model_loaded(self):
-        """Lazy load the model only when needed to save startup memory"""
-        if self.model is not None:
-            return  # Already loaded
-
-        print(f"📥 Loading MiDaS model (first time, ~100MB download)...")
-        try:
-            # Load MiDaS model - using small version for Render free tier
-            self.model = torch.hub.load('intel-isl/MiDaS', self.model_type, pretrained=True, trust_repo=True)
-            self.model.to(self.device)
-            self.model.eval()
-
-            # Load transforms
-            midas_transforms = torch.hub.load('intel-isl/MiDaS', 'transforms', trust_repo=True)
-            if self.model_type == 'DPT_Large' or self.model_type == 'DPT_Hybrid':
-                self.transform = midas_transforms.dpt_transform
-            else:
-                self.transform = midas_transforms.small_transform
-
-            print(f"✅ Depth model loaded: {self.model_type}")
-
-        except Exception as e:
-            print(f"❌ Error loading model: {e}")
-            raise
+    def __init__(self):
+        """Initialize depth estimator with HF API"""
+        self.api_token = os.getenv('HF_API_TOKEN')
+        
+        # Hugging Face model endpoint
+        self.api_url = "https://api-inference.huggingface.co/models/Intel/dpt-large"
+        
+        if not self.api_token:
+            print("⚠️  WARNING: HF_API_TOKEN not found in environment")
+            print("   Set it in Render dashboard: Environment → Add HF_API_TOKEN")
+            print("   Get token from: https://huggingface.co/settings/tokens")
+        else:
+            print("🔧 Depth Estimator ready (using Hugging Face API)")
+            print("   ✅ API token configured")
 
     def estimate_depth(self, image_path):
         """
-        Estimate depth map from image
+        Estimate depth map from image using HF Inference API
 
         Args:
             image_path: Path to input image
@@ -66,44 +40,90 @@ class DepthEstimator:
             depth_map: Normalized depth map (numpy array)
             confidence_map: Confidence/uncertainty map
         """
-        # Lazy load model on first use
-        self._ensure_model_loaded()
-
         try:
-            # Load image
+            # Check API token
+            if not self.api_token:
+                raise ValueError("HF_API_TOKEN environment variable not set")
+
+            # Load and prepare image
+            print(f"📤 Sending image to Hugging Face API...")
+            with open(image_path, 'rb') as f:
+                image_bytes = f.read()
+
+            # Load original image for dimensions
             img = cv2.imread(image_path)
             if img is None:
                 raise ValueError(f"Could not load image: {image_path}")
-
+            
+            original_height, original_width = img.shape[:2]
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-            # Apply transforms
-            input_batch = self.transform(img).to(self.device)
+            # Call Hugging Face Inference API
+            headers = {"Authorization": f"Bearer {self.api_token}"}
+            
+            response = requests.post(
+                self.api_url,
+                headers=headers,
+                data=image_bytes,
+                timeout=60  # 60 second timeout
+            )
 
-            # Predict depth
-            with torch.no_grad():
-                prediction = self.model(input_batch)
-                prediction = torch.nn.functional.interpolate(
-                    prediction.unsqueeze(1),
-                    size=img.shape[:2],
-                    mode='bicubic',
-                    align_corners=False
-                ).squeeze()
+            if response.status_code == 503:
+                # Model is loading, wait and retry
+                print("   Model loading on HF servers, waiting 20 seconds...")
+                import time
+                time.sleep(20)
+                response = requests.post(
+                    self.api_url,
+                    headers=headers,
+                    data=image_bytes,
+                    timeout=60
+                )
 
-            depth_map = prediction.cpu().numpy()
+            if response.status_code != 200:
+                error_msg = f"HF API error {response.status_code}: {response.text}"
+                print(f"❌ {error_msg}")
+                raise Exception(error_msg)
+
+            print("✅ Received depth map from HF API")
+
+            # Parse response - HF returns a PIL Image
+            depth_image = Image.open(io.BytesIO(response.content))
+            
+            # Convert to numpy array
+            depth_map = np.array(depth_image)
+            
+            # If it's RGB, convert to grayscale
+            if len(depth_map.shape) == 3:
+                depth_map = cv2.cvtColor(depth_map, cv2.COLOR_RGB2GRAY)
+            
+            # Resize to match original image dimensions
+            if depth_map.shape != (original_height, original_width):
+                depth_map = cv2.resize(depth_map, (original_width, original_height))
 
             # Normalize depth map to 0-1 range
-            depth_map = (depth_map - depth_map.min()) / (depth_map.max() - depth_map.min())
+            depth_map = depth_map.astype(np.float32)
+            if depth_map.max() > depth_map.min():
+                depth_map = (depth_map - depth_map.min()) / (depth_map.max() - depth_map.min())
+            else:
+                depth_map = depth_map / 255.0  # If already normalized
 
             # Invert so closer = higher values (standard convention)
             depth_map = 1.0 - depth_map
 
-            # Calculate confidence map based on depth gradient
-            # Areas with high gradient change might be less confident
+            # Calculate confidence map
             confidence_map = self._calculate_confidence(depth_map)
+
+            print(f"✅ Depth map processed: {depth_map.shape}")
 
             return depth_map, confidence_map
 
+        except requests.exceptions.Timeout:
+            print("❌ HF API request timed out")
+            raise Exception("Hugging Face API timeout - please try again")
+        except requests.exceptions.RequestException as e:
+            print(f"❌ HF API request failed: {e}")
+            raise Exception(f"Failed to connect to Hugging Face API: {e}")
         except Exception as e:
             print(f"❌ Error estimating depth: {e}")
             raise
@@ -156,27 +176,3 @@ class DepthEstimator:
             cv2.imwrite(output_path, colored_depth)
 
         return colored_depth
-
-    def estimate_scale_and_focal_length(self, image_shape, depth_map):
-        """
-        Estimate reasonable scale and focal length for 3D projection
-
-        Args:
-            image_shape: (height, width) of image
-            depth_map: Estimated depth map
-
-        Returns:
-            focal_length, scale_factor
-        """
-        height, width = image_shape[:2]
-
-        # Estimate focal length based on image size (rough approximation)
-        # Typical FOV for photos is around 60-70 degrees
-        focal_length = width * 0.8
-
-        # Estimate scale to get reasonable 3D coordinates
-        # Adjust based on depth variation
-        depth_range = depth_map.max() - depth_map.min()
-        scale_factor = 10.0 / max(depth_range, 0.01)  # Scale to ~10 units depth range
-
-        return focal_length, scale_factor
