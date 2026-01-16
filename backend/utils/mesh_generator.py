@@ -84,19 +84,19 @@ class MeshGenerator:
         y = np.arange(0, height)
         x_grid, y_grid = np.meshgrid(x, y)
 
-        # Estimate focal length (rough approximation)
-        focal_length = width * 1.2
+        # Estimate focal length for realistic perspective
+        focal_length = width * 1.0
 
         # Center coordinates
         cx = width / 2.0
         cy = height / 2.0
 
-        # Scale depth for subtle 3D effect (not extreme terrain)
-        # Lower value = flatter, more photo-like
-        # Higher value = more dramatic depth
-        depth_scale = 0.5  # Much smaller for photo-like appearance
+        # Scale depth for photo-like 3D effect
+        # This creates subtle depth that looks like the original image
+        # Not flat, not jagged terrain - just right
+        depth_scale = 1.0
 
-        # Convert to 3D coordinates
+        # Convert to 3D coordinates with perspective projection
         z = depth_map * depth_scale
         x_3d = (x_grid - cx) * z / focal_length
         y_3d = (y_grid - cy) * z / focal_length
@@ -107,72 +107,29 @@ class MeshGenerator:
         # Get colors from image
         vertex_colors = image.reshape(-1, 3)
 
-        # Filter by confidence if available
-        if confidence_map is not None:
-            # Use a lower threshold for custom depth estimation
-            confidence_threshold = 0.1
-            valid_mask = confidence_map.flatten() > confidence_threshold
-            # Keep indices for reconstruction
-            valid_indices = np.where(valid_mask)[0]
+        # Disable confidence filtering for now - it causes face generation bugs
+        # Just use all vertices
 
-            # If too many vertices filtered out, disable filtering
-            if len(valid_indices) < (len(vertices) * 0.1):  # Less than 10% vertices kept
-                print("⚠️  Confidence filtering too aggressive, disabling...")
-                valid_indices = np.arange(len(vertices))
-                confidence_map = None  # Disable confidence filtering for faces too
-        else:
-            valid_indices = np.arange(len(vertices))
-
-        # Create grid triangulation
+        # Create grid triangulation directly
         faces = []
-        vertex_map = np.full(height * width, -1, dtype=int)
-        vertex_map[valid_indices] = np.arange(len(valid_indices))
 
-        filtered_vertices = vertices[valid_indices]
-        filtered_colors = vertex_colors[valid_indices]
-
-        # Create faces from grid
+        # Create faces from grid (every quad becomes 2 triangles)
         for i in range(height - 1):
             for j in range(width - 1):
+                # Current vertex index
                 idx = i * width + j
-                
-                if confidence_map is not None:
-                    # Check if all vertices are valid
-                    if (vertex_map[idx] < 0 or 
-                        vertex_map[idx + 1] < 0 or 
-                        vertex_map[idx + width] < 0 or
-                        vertex_map[idx + width + 1] < 0):
-                        continue
-                
-                v0 = vertex_map[idx] if confidence_map is not None else idx
-                v1 = vertex_map[idx + 1] if confidence_map is not None else idx + 1
-                v2 = vertex_map[idx + width] if confidence_map is not None else idx + width
-                v3 = vertex_map[idx + width + 1] if confidence_map is not None else idx + width + 1
+
+                # Indices of the quad's 4 corners
+                v0 = idx
+                v1 = idx + 1
+                v2 = idx + width
+                v3 = idx + width + 1
 
                 # Create two triangles for this quad
                 faces.append([v0, v1, v2])
                 faces.append([v1, v3, v2])
 
-        faces = np.array(faces)
-        
-        if confidence_map is not None:
-            vertices = filtered_vertices
-            vertex_colors = filtered_colors
-
-        # Remove degenerate faces (faces where vertices are too close)
-        if len(faces) > 0:
-            # Calculate face areas
-            v0 = vertices[faces[:, 0]]
-            v1 = vertices[faces[:, 1]]
-            v2 = vertices[faces[:, 2]]
-            
-            # Cross product to get face normals and areas
-            cross = np.cross(v1 - v0, v2 - v0)
-            areas = np.linalg.norm(cross, axis=1)
-            
-            # Keep faces with reasonable area
-            valid_faces = areas > 0.001
-            faces = faces[valid_faces]
+        faces = np.array(faces, dtype=np.int32)
 
         # Create trimesh object
         mesh = trimesh.Trimesh(
