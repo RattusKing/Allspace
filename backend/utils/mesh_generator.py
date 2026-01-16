@@ -85,14 +85,16 @@ class MeshGenerator:
         x_grid, y_grid = np.meshgrid(x, y)
 
         # Estimate focal length (rough approximation)
-        focal_length = width * 0.8
+        focal_length = width * 1.2
 
         # Center coordinates
         cx = width / 2.0
         cy = height / 2.0
 
-        # Scale depth for better visualization
-        depth_scale = 5.0
+        # Scale depth for subtle 3D effect (not extreme terrain)
+        # Lower value = flatter, more photo-like
+        # Higher value = more dramatic depth
+        depth_scale = 0.5  # Much smaller for photo-like appearance
 
         # Convert to 3D coordinates
         z = depth_map * depth_scale

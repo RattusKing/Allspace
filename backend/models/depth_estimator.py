@@ -73,13 +73,13 @@ class DepthEstimator:
             else:  # general/unknown
                 depth_map = self._general_depth(img_gray, height, width)
 
-            # Apply edge-aware refinement
+            # Apply subtle edge-aware refinement
             edges = cv2.Canny(img_gray, 50, 150)
             dist = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 5)
             edge_influence = 1.0 - self._normalize(dist)
 
-            # Blend depth with edge information
-            depth_map = depth_map * 0.7 + edge_influence * 0.3
+            # Very subtle edge blending for photo-like appearance
+            depth_map = depth_map * 0.9 + edge_influence * 0.1
 
             # Clean up
             del edges, dist, edge_influence
@@ -88,7 +88,8 @@ class DepthEstimator:
             depth_map = np.nan_to_num(depth_map, nan=0.5, posinf=1.0, neginf=0.0)
             depth_map = self._normalize(depth_map)
 
-            # Smooth while preserving edges
+            # Heavy smoothing for photo-like appearance (not jagged terrain)
+            depth_map = cv2.GaussianBlur(depth_map, (11, 11), 0)
             depth_map = cv2.bilateralFilter(depth_map, 9, 75, 75)
             depth_map = self._normalize(depth_map)
 
@@ -155,61 +156,65 @@ class DepthEstimator:
             return "general"
 
     def _indoor_depth(self, img_gray, height, width):
-        """Depth estimation for indoor rooms"""
-        # Strong perspective from floor/ceiling
-        y_coords = np.linspace(1, 0, height, dtype=np.float32)
+        """Depth estimation for indoor rooms - subtle for photo-like appearance"""
+        # Gentle perspective from floor/ceiling
+        y_coords = np.linspace(0.7, 0.3, height, dtype=np.float32)
         depth = np.tile(y_coords[:, np.newaxis], (1, width))
 
-        # Darken = further for indoor scenes
+        # Very subtle brightness influence
         brightness = self._normalize(img_gray.astype(np.float32))
-        depth = depth * 0.6 + (1.0 - brightness) * 0.4
+        depth = depth * 0.85 + (1.0 - brightness) * 0.15
 
         return depth
 
     def _landscape_depth(self, img_gray, height, width):
-        """Depth estimation for outdoor landscapes"""
-        # Sky is far, ground is closer
-        y_coords = np.linspace(0.9, 0.1, height, dtype=np.float32)
+        """Depth estimation for outdoor landscapes - subtle for photo-like appearance"""
+        # Gentle sky to ground gradient
+        y_coords = np.linspace(0.7, 0.3, height, dtype=np.float32)
         depth = np.tile(y_coords[:, np.newaxis], (1, width))
 
-        # Contrast = closer for outdoor
+        # Very subtle contrast influence
         mean = cv2.blur(img_gray.astype(np.float32), (15, 15))
         mean_sq = cv2.blur(img_gray.astype(np.float32)**2, (15, 15))
         variance = mean_sq - mean**2
         contrast = self._normalize(variance)
 
-        depth = depth * 0.5 + contrast * 0.5
+        depth = depth * 0.85 + contrast * 0.15
         del mean, mean_sq, variance
 
         return depth
 
     def _portrait_depth(self, img_gray, img_rgb, height, width):
-        """Depth estimation for portraits/people"""
-        # Center is closer, edges are background
+        """Depth estimation for portraits/people - subtle for photo-like appearance"""
+        # Very gentle center focus
         y, x = np.ogrid[:height, :width]
         center_y, center_x = height / 2, width / 2
 
-        # Distance from center
+        # Distance from center (much less dramatic)
         dist_from_center = np.sqrt((x - center_x)**2 + (y - center_y)**2)
         max_dist = np.sqrt(center_x**2 + center_y**2)
-        depth = 1.0 - self._normalize(dist_from_center)
+        radial = 1.0 - self._normalize(dist_from_center)
 
-        # Bright = closer for portraits
+        # Compress to small range (0.4 to 0.6)
+        depth = 0.4 + radial * 0.2
+
+        # Very subtle brightness
         brightness = self._normalize(img_gray.astype(np.float32))
-        depth = depth * 0.6 + brightness * 0.4
+        depth = depth * 0.9 + brightness * 0.1
 
         del dist_from_center
         return depth
 
     def _general_depth(self, img_gray, height, width):
-        """General depth estimation for unknown scenes"""
-        # Balanced approach
-        y_coords = np.linspace(0.8, 0.2, height, dtype=np.float32)
+        """General depth estimation for unknown scenes - subtle for photo-like appearance"""
+        # Very gentle gradient
+        y_coords = np.linspace(0.6, 0.4, height, dtype=np.float32)
         perspective = np.tile(y_coords[:, np.newaxis], (1, width))
 
         brightness = self._normalize(img_gray.astype(np.float32))
 
-        return perspective * 0.6 + brightness * 0.4
+        # Mostly flat with subtle variation
+        return perspective * 0.8 + brightness * 0.2
 
     def _normalize(self, array):
         """Normalize array to 0-1 range"""
