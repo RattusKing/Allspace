@@ -42,16 +42,17 @@ class DepthEstimator:
             if img is None:
                 raise ValueError(f"Could not load image: {image_path}")
 
-            # Resize if too large (save memory)
-            max_dim = 512
+            # Resize if too large (balance quality vs memory)
+            # Higher resolution = better detail, but more RAM
+            max_dim = 640  # Increased from 512 for better quality
             height, width = img.shape[:2]
             if max(height, width) > max_dim:
                 scale = max_dim / max(height, width)
                 new_width = int(width * scale)
                 new_height = int(height * scale)
-                img = cv2.resize(img, (new_width, new_height))
+                img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
                 height, width = new_height, new_width
-                print(f"   📏 Resized to {width}x{height} to save memory")
+                print(f"   📏 Resized to {width}x{height} (quality-optimized)")
 
             img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
