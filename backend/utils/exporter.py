@@ -30,14 +30,69 @@ class ModelExporter:
         try:
             print(f"  📦 Exporting GLB to {output_path}")
 
-            # Trimesh can export directly to GLB
+            # Validate mesh before export
+            if not self._validate_mesh(mesh):
+                print(f"  ❌ Mesh validation failed")
+                return False
+
+            # Ensure mesh has necessary attributes
+            if not mesh.is_watertight:
+                print(f"  ⚠️  Mesh is not watertight (expected for depth-based meshes)")
+
+            # Export to GLB
             mesh.export(output_path, file_type='glb')
 
-            print(f"  ✅ GLB exported successfully")
-            return True
+            # Verify file was created and has content
+            if os.path.exists(output_path):
+                file_size = os.path.getsize(output_path)
+                print(f"  ✅ GLB exported successfully ({file_size} bytes)")
+                return file_size > 0
+            else:
+                print(f"  ❌ GLB file was not created")
+                return False
 
         except Exception as e:
             print(f"  ❌ Error exporting GLB: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _validate_mesh(self, mesh):
+        """Validate mesh has valid geometry"""
+        try:
+            # Check mesh has vertices and faces
+            if len(mesh.vertices) == 0:
+                print(f"  ❌ Mesh has no vertices")
+                return False
+
+            if len(mesh.faces) == 0:
+                print(f"  ❌ Mesh has no faces")
+                return False
+
+            # Check for NaN or Inf in vertices
+            if np.isnan(mesh.vertices).any():
+                print(f"  ❌ Mesh has NaN vertices")
+                return False
+
+            if np.isinf(mesh.vertices).any():
+                print(f"  ❌ Mesh has Inf vertices")
+                return False
+
+            # Check vertex range is reasonable
+            v_min = mesh.vertices.min()
+            v_max = mesh.vertices.max()
+            v_range = v_max - v_min
+
+            if v_range > 10000:
+                print(f"  ⚠️  Mesh has very large range: {v_range:.2f}")
+
+            print(f"  ✅ Mesh validation passed: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
+            print(f"     Bounds: [{v_min:.2f}, {v_max:.2f}]")
+
+            return True
+
+        except Exception as e:
+            print(f"  ❌ Mesh validation error: {e}")
             return False
 
     def export_fbx(self, mesh, output_path, image_data=None):
