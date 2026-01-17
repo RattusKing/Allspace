@@ -329,17 +329,24 @@ def download_model(job_id, format):
         filepath = os.path.join(app.config['OUTPUT_FOLDER'], filename)
 
         if not os.path.exists(filepath):
+            print(f"  ❌ File not found: {filepath}")
             return jsonify({'error': 'File not found'}), 404
+
+        # Check file size
+        file_size = os.path.getsize(filepath)
+        print(f"  📥 Downloading {format.upper()}: {filepath} ({file_size} bytes)")
 
         # Determine MIME type
         mime_type = 'model/gltf-binary' if format.lower() == 'glb' else 'application/octet-stream'
 
-        # Send file
+        # Send file with proper chunking for large files
         return send_file(
             filepath,
             mimetype=mime_type,
             as_attachment=True,
-            download_name=f"generated_3d_environment.{format.lower()}"
+            download_name=f"generated_3d_environment.{format.lower()}",
+            conditional=False,  # Disable conditional responses
+            etag=False  # Disable etag caching
         )
 
     except Exception as e:
