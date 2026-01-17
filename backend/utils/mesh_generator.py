@@ -67,17 +67,24 @@ class MeshGenerator:
         Returns:
             mesh: Trimesh object
         """
-        # Downsample for performance (optional)
+        # Aggressive downsampling to stay under 512MB memory limit
+        # Target: ~100K vertices max (320x320 = 102,400)
         downsample_factor = 1
-        if width > 1024 or height > 1024:
-            downsample_factor = 2
-        
+        max_dimension = max(width, height)
+
+        if max_dimension > 512:
+            downsample_factor = 2  # 640x640 → 320x320
+        if max_dimension > 1024:
+            downsample_factor = 4  # 1280x1280 → 320x320
+
         if downsample_factor > 1:
+            print(f"  🔽 Downsampling mesh from {width}x{height} by factor {downsample_factor} to reduce memory usage")
             depth_map = depth_map[::downsample_factor, ::downsample_factor]
             image = image[::downsample_factor, ::downsample_factor]
             if confidence_map is not None:
                 confidence_map = confidence_map[::downsample_factor, ::downsample_factor]
             height, width = depth_map.shape
+            print(f"  ✅ Mesh resolution: {width}x{height} = {width * height} vertices")
 
         # Create coordinate grids
         x = np.arange(0, width)
