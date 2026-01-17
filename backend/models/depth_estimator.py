@@ -24,8 +24,8 @@ class DepthEstimator:
 
     def estimate_depth(self, image_path):
         """
-        Estimate depth map from image using scene-aware CV algorithms
-        Optimized for low memory usage (<100MB)
+        Estimate depth map for flat textured plane (Facebook 3D Photo style)
+        Creates minimal depth for photo-realistic appearance
 
         Args:
             image_path: Path to input image
@@ -35,16 +35,15 @@ class DepthEstimator:
             confidence_map: Confidence/uncertainty map
         """
         try:
-            print(f"🎨 Analyzing image for depth estimation...")
+            print(f"🎨 Creating flat textured plane with subtle depth...")
 
-            # Load image with max size limit to save memory
+            # Load image
             img = cv2.imread(image_path)
             if img is None:
                 raise ValueError(f"Could not load image: {image_path}")
 
-            # Resize if too large (balance quality vs memory)
-            # Higher resolution = better detail, but more RAM
-            max_dim = 640  # Increased from 512 for better quality
+            # Keep good quality for clean appearance
+            max_dim = 640
             height, width = img.shape[:2]
             if max(height, width) > max_dim:
                 scale = max_dim / max(height, width)
@@ -52,66 +51,46 @@ class DepthEstimator:
                 new_height = int(height * scale)
                 img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
                 height, width = new_height, new_width
-                print(f"   📏 Resized to {width}x{height} (quality-optimized)")
+                print(f"   📏 Resized to {width}x{height}")
 
             img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-            # Detect scene type to apply appropriate depth strategy
-            print("   🔍 Detecting scene type...")
-            scene_type = self._detect_scene_type(img_gray, img_rgb, height, width)
-            print(f"   📌 Scene type: {scene_type}")
+            # Create VERY subtle depth - almost flat
+            # This creates a clean photo appearance, not messy geometry
 
-            # Scene-specific depth estimation
-            print("   📐 Computing scene-aware depth map...")
+            # Base: Nearly flat (0.48 to 0.52 range = super subtle)
+            y_coords = np.linspace(0.52, 0.48, height, dtype=np.float32)
+            depth_map = np.tile(y_coords[:, np.newaxis], (1, width))
 
-            if scene_type == "indoor_room":
-                depth_map = self._indoor_depth(img_gray, height, width)
-            elif scene_type == "outdoor_landscape":
-                depth_map = self._landscape_depth(img_gray, height, width)
-            elif scene_type == "portrait":
-                depth_map = self._portrait_depth(img_gray, img_rgb, height, width)
-            else:  # general/unknown
-                depth_map = self._general_depth(img_gray, height, width)
-
-            # Apply subtle edge-aware refinement
+            # Add minimal edge variation for depth cues
             edges = cv2.Canny(img_gray, 50, 150)
             dist = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 5)
-            edge_influence = 1.0 - self._normalize(dist)
+            edge_depth = self._normalize(dist)
 
-            # Very subtle edge blending for photo-like appearance
-            depth_map = depth_map * 0.9 + edge_influence * 0.1
+            # Blend VERY subtly (95% flat, 5% edge variation)
+            depth_map = depth_map * 0.95 + edge_depth * 0.05
 
-            # Clean up
-            del edges, dist, edge_influence
-
-            # Validate and normalize
-            depth_map = np.nan_to_num(depth_map, nan=0.5, posinf=1.0, neginf=0.0)
+            # Heavy smoothing for clean, professional appearance
+            depth_map = cv2.GaussianBlur(depth_map, (21, 21), 0)
             depth_map = self._normalize(depth_map)
 
-            # Heavy smoothing for photo-like appearance (not jagged terrain)
-            depth_map = cv2.GaussianBlur(depth_map, (11, 11), 0)
-            depth_map = cv2.bilateralFilter(depth_map, 9, 75, 75)
-            depth_map = self._normalize(depth_map)
+            # Compress to tiny range for photo-like appearance
+            depth_map = 0.45 + depth_map * 0.1  # Range: 0.45-0.55
 
-            # Simple confidence map (based on gradient)
-            grad_x = cv2.Sobel(depth_map, cv2.CV_32F, 1, 0, ksize=3)
-            grad_y = cv2.Sobel(depth_map, cv2.CV_32F, 0, 1, ksize=3)
-            gradient = np.sqrt(grad_x**2 + grad_y**2)
-            confidence_map = 1.0 - self._normalize(gradient)
-            confidence_map = cv2.GaussianBlur(confidence_map, (5, 5), 0)
+            # Simple flat confidence
+            confidence_map = np.ones_like(depth_map) * 0.9
 
             # Clean up
-            del grad_x, grad_y, gradient, img_gray, img_rgb, img
+            del edges, dist, edge_depth, img_gray, img
 
-            print(f"✅ Depth map generated: {depth_map.shape}")
-            print(f"   Range: {depth_map.min():.3f} - {depth_map.max():.3f}")
-            print(f"   Scene-aware algorithm used ({scene_type})")
+            print(f"✅ Flat textured plane created: {depth_map.shape}")
+            print(f"   Range: {depth_map.min():.3f} - {depth_map.max():.3f} (very subtle)")
+            print(f"   Style: Clean photo-realistic appearance")
 
             return depth_map, confidence_map
 
         except Exception as e:
-            print(f"❌ Error estimating depth: {e}")
+            print(f"❌ Error creating depth plane: {e}")
             raise
 
     def _detect_scene_type(self, img_gray, img_rgb, height, width):

@@ -84,25 +84,26 @@ class MeshGenerator:
         y = np.arange(0, height)
         x_grid, y_grid = np.meshgrid(x, y)
 
-        # Estimate focal length for realistic perspective
-        focal_length = width * 1.0
+        # Create flat textured plane (Facebook 3D Photo style)
+        # Uses minimal depth for clean, photo-realistic appearance
 
-        # Center coordinates
-        cx = width / 2.0
-        cy = height / 2.0
+        # Normalize coordinates to -1 to 1 range for clean positioning
+        x_normalized = (x_grid - width / 2.0) / (width / 2.0)
+        y_normalized = (y_grid - height / 2.0) / (height / 2.0)
 
-        # Scale depth for photo-like 3D effect
-        # This creates subtle depth that looks like the original image
-        # Not flat, not jagged terrain - just right
-        depth_scale = 1.0
+        # VERY small depth scale for nearly-flat appearance
+        # This creates a clean photo look, not messy geometry
+        depth_scale = 0.15
 
-        # Convert to 3D coordinates with perspective projection
+        # Apply depth (positive Z = above grid, not under it!)
         z = depth_map * depth_scale
-        x_3d = (x_grid - cx) * z / focal_length
-        y_3d = (y_grid - cy) * z / focal_length
 
-        # Flatten arrays
-        vertices = np.stack([x_3d.flatten(), -y_3d.flatten(), -z.flatten()], axis=1)
+        # Create flat plane coordinates
+        x_3d = x_normalized
+        y_3d = y_normalized
+
+        # Flatten arrays (Z is POSITIVE for above grid)
+        vertices = np.stack([x_3d.flatten(), -y_3d.flatten(), z.flatten()], axis=1)
 
         # Get colors from image
         vertex_colors = image.reshape(-1, 3)
