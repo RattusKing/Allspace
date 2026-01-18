@@ -64,8 +64,7 @@ class DepthEstimator:
             if scene_type == "floor_plan":
                 # Floor plans get special treatment - walls are HIGH, floors are LOW
                 depth_map = self._floorplan_depth(img_gray, height, width)
-                # Light smoothing to keep walls crisp
-                depth_map = cv2.GaussianBlur(depth_map, (5, 5), 0)
+                # Minimal smoothing - _floorplan_depth already does light smoothing internally
                 depth_map = self._normalize(depth_map)
             elif scene_type == "indoor_room":
                 depth_map = self._indoor_depth(img_gray, height, width)
@@ -148,16 +147,16 @@ class DepthEstimator:
         light_ratio = light_pixels / total_pixels
 
         # Floor plans typically have:
-        # - High average brightness (mostly white)
+        # - High average brightness (mostly white) - RELAXED from >200 to >180
         # - High contrast (dark walls vs white floors)
         # - Many straight lines (both horizontal and vertical)
-        is_mostly_white = avg_brightness > 200
-        is_high_contrast = std_brightness > 60
-        has_significant_dark_lines = dark_ratio > 0.05 and dark_ratio < 0.3
-        has_significant_white_space = light_ratio > 0.5
+        is_mostly_white = avg_brightness > 180  # More lenient
+        is_high_contrast = std_brightness > 40  # More lenient (was 60)
+        has_significant_dark_lines = dark_ratio > 0.03 and dark_ratio < 0.4  # More lenient range
+        has_significant_white_space = light_ratio > 0.4  # More lenient (was 0.5)
 
         edges = cv2.Canny(img_gray, 50, 150)
-        lines = cv2.HoughLinesP(edges, 1, np.pi/180, 50, minLineLength=width//4, maxLineGap=20)
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, 30, minLineLength=width//6, maxLineGap=30)  # More lenient
 
         horizontal_lines = 0
         vertical_lines = 0
@@ -171,13 +170,20 @@ class DepthEstimator:
                 elif abs(angle - np.pi/2) < 0.3:  # Vertical
                     vertical_lines += 1
 
-        has_many_straight_lines = (horizontal_lines + vertical_lines) > 10
+        has_many_straight_lines = (horizontal_lines + vertical_lines) > 8  # More lenient (was 10)
 
         # Detect floor plan (PRIMARY USE CASE)
-        if (is_mostly_white and is_high_contrast and
-            has_significant_dark_lines and has_significant_white_space and
-            has_many_straight_lines):
+        # Require at least 3 of these 4 conditions to be true
+        conditions_met = sum([
+            is_mostly_white and has_significant_white_space,  # Mostly white background
+            is_high_contrast,  # High contrast
+            has_significant_dark_lines,  # Has wall-like dark elements
+            has_many_straight_lines  # Has architectural straight lines
+        ])
+
+        if conditions_met >= 3:
             del edges
+            print(f"  📐 Floor plan detected! Conditions: white={is_mostly_white}, contrast={is_high_contrast}, dark_lines={has_significant_dark_lines}, straight_lines={has_many_straight_lines}")
             return "floor_plan"
 
         # Check color saturation (landscapes tend to be more saturated)
@@ -206,29 +212,62 @@ class DepthEstimator:
     def _floorplan_depth(self, img_gray, height, width):
         """
         Depth estimation for architectural floor plans
-        WALLS (dark pixels) = HIGH depth (extrude up to ceiling)
-        FLOORS (white pixels) = LOW depth (ground level)
+        WALLS (thick dark lines) = HIGH depth (extrude up to ceiling)
+        FLOORS (white spaces) = LOW depth (ground level)
+
+        Key challenge: Filter out text/labels and keep only wall structure
         """
-        # Invert brightness: dark = high (walls), light = low (floors)
-        # This is opposite of typical photo depth!
-        inverted = 255 - img_gray
-        depth = self._normalize(inverted.astype(np.float32))
+        # Step 1: Create binary mask of dark elements (walls + text)
+        # Most walls are gray (100-180), not pure black
+        binary = cv2.threshold(img_gray, 180, 255, cv2.THRESH_BINARY)[1]
+        binary_inv = 255 - binary  # Dark elements are now white
 
-        # Enhance wall detection with thresholding
-        # Anything darker than 150 is likely a wall
-        wall_mask = img_gray < 150
-        floor_mask = img_gray > 200
+        # Step 2: Remove text and small elements using morphological operations
+        # Text = small, disconnected. Walls = thick, continuous.
 
-        # Set walls to maximum height (1.0 = ceiling height)
-        # Set floors to minimum height (0.0 = ground level)
-        depth[wall_mask] = 1.0  # Walls at full ceiling height
-        depth[floor_mask] = 0.0  # Floors at ground level
+        # First, remove very small specs (noise)
+        kernel_small = np.ones((2, 2), np.uint8)
+        cleaned = cv2.morphologyEx(binary_inv, cv2.MORPH_OPEN, kernel_small)
 
-        # Areas in between (150-200) get gradient depth
-        mid_mask = (img_gray >= 150) & (img_gray <= 200)
-        if np.any(mid_mask):
-            mid_values = 1.0 - self._normalize(img_gray[mid_mask].astype(np.float32))
-            depth[mid_mask] = mid_values
+        # Close gaps in walls (connect nearby wall segments)
+        kernel_close = np.ones((3, 3), np.uint8)
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel_close)
+
+        # Dilate to make walls thicker, then erode to remove thin text
+        # This keeps thick continuous lines (walls) and removes thin lines (text)
+        kernel_wall = np.ones((4, 4), np.uint8)
+        dilated = cv2.dilate(cleaned, kernel_wall, iterations=2)
+        eroded = cv2.erode(dilated, kernel_wall, iterations=2)
+
+        # Step 3: Find connected components and filter by size
+        # Walls are large connected regions, text is small
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(eroded, connectivity=8)
+
+        # Create mask of only large components (walls, not text)
+        wall_mask = np.zeros_like(img_gray, dtype=np.uint8)
+        min_wall_area = (width * height) * 0.001  # Walls should be at least 0.1% of image
+
+        for i in range(1, num_labels):  # Skip background (0)
+            area = stats[i, cv2.CC_STAT_AREA]
+            if area > min_wall_area:
+                wall_mask[labels == i] = 255
+
+        # Step 4: Create depth map
+        # Walls (white in wall_mask) = 1.0 (ceiling height)
+        # Floors (black in wall_mask) = 0.0 (ground level)
+        depth = np.zeros((height, width), dtype=np.float32)
+        depth[wall_mask > 0] = 1.0  # Walls at ceiling height
+        depth[wall_mask == 0] = 0.0  # Floors at ground level
+
+        # Step 5: Slight smoothing to remove hard edges (but keep walls distinct)
+        depth = cv2.GaussianBlur(depth, (3, 3), 0)
+
+        print(f"  🏗️  Floor plan processing:")
+        print(f"      Detected {num_labels-1} components, {np.sum(stats[1:, cv2.CC_STAT_AREA] > min_wall_area)} are walls")
+        print(f"      Wall pixels: {np.sum(wall_mask > 0)} ({100 * np.sum(wall_mask > 0) / wall_mask.size:.1f}%)")
+
+        # Clean up
+        del binary, binary_inv, cleaned, dilated, eroded, wall_mask, labels, stats, centroids
 
         return depth
 
