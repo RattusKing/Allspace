@@ -61,33 +61,60 @@ class DepthEstimator:
             print(f"   🔍 Detected scene type: {scene_type}")
 
             # Apply scene-specific depth estimation
-            if scene_type == "indoor_room":
+            if scene_type == "floor_plan":
+                # Floor plans get special treatment - walls are HIGH, floors are LOW
+                depth_map = self._floorplan_depth(img_gray, height, width)
+                # Light smoothing to keep walls crisp
+                depth_map = cv2.GaussianBlur(depth_map, (5, 5), 0)
+                depth_map = self._normalize(depth_map)
+            elif scene_type == "indoor_room":
                 depth_map = self._indoor_depth(img_gray, height, width)
+                # Add edge-aware depth refinement
+                edges = cv2.Canny(img_gray, 50, 150)
+                dist = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 5)
+                edge_depth = self._normalize(dist)
+                # Blend with edge information (80% scene depth, 20% edge refinement)
+                depth_map = depth_map * 0.8 + edge_depth * 0.2
+                # Heavy smoothing for clean, professional appearance (NO jagged edges)
+                depth_map = cv2.GaussianBlur(depth_map, (31, 31), 0)
+                depth_map = self._normalize(depth_map)
             elif scene_type == "outdoor_landscape":
                 depth_map = self._landscape_depth(img_gray, height, width)
+                edges = cv2.Canny(img_gray, 50, 150)
+                dist = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 5)
+                edge_depth = self._normalize(dist)
+                depth_map = depth_map * 0.8 + edge_depth * 0.2
+                depth_map = cv2.GaussianBlur(depth_map, (31, 31), 0)
+                depth_map = self._normalize(depth_map)
             elif scene_type == "portrait":
                 depth_map = self._portrait_depth(img_gray, img_rgb, height, width)
+                edges = cv2.Canny(img_gray, 50, 150)
+                dist = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 5)
+                edge_depth = self._normalize(dist)
+                depth_map = depth_map * 0.8 + edge_depth * 0.2
+                depth_map = cv2.GaussianBlur(depth_map, (31, 31), 0)
+                depth_map = self._normalize(depth_map)
             else:
                 depth_map = self._general_depth(img_gray, height, width)
+                edges = cv2.Canny(img_gray, 50, 150)
+                dist = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 5)
+                edge_depth = self._normalize(dist)
+                depth_map = depth_map * 0.8 + edge_depth * 0.2
+                depth_map = cv2.GaussianBlur(depth_map, (31, 31), 0)
+                depth_map = self._normalize(depth_map)
 
-            # Add edge-aware depth refinement
-            edges = cv2.Canny(img_gray, 50, 150)
-            dist = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 5)
-            edge_depth = self._normalize(dist)
-
-            # Blend with edge information (80% scene depth, 20% edge refinement)
-            depth_map = depth_map * 0.8 + edge_depth * 0.2
-
-            # Heavy smoothing for clean, professional appearance (NO jagged edges)
-            depth_map = cv2.GaussianBlur(depth_map, (31, 31), 0)
-            depth_map = self._normalize(depth_map)
-
-            # Use moderate depth range (0.2-0.8 = 60% variation for visible 3D effect)
-            depth_map = 0.2 + depth_map * 0.6
-
-            # Confidence based on edge strength
-            confidence_map = 1.0 - (self._normalize(edges.astype(np.float32)) * 0.3)
-            confidence_map = cv2.GaussianBlur(confidence_map, (11, 11), 0)
+            # Use different depth ranges based on scene type
+            if scene_type == "floor_plan":
+                # Floor plans use FULL range (0.0-1.0) for actual room height
+                # 0.0 = floor level, 1.0 = ceiling height (8-10 feet)
+                depth_map = depth_map  # Already 0-1, keep full range
+                confidence_map = np.ones_like(depth_map) * 0.95  # High confidence for floor plans
+            else:
+                # Other scenes use moderate depth range (0.2-0.8 = 60% variation)
+                depth_map = 0.2 + depth_map * 0.6
+                # Confidence based on edge strength
+                confidence_map = 1.0 - (self._normalize(edges.astype(np.float32)) * 0.3)
+                confidence_map = cv2.GaussianBlur(confidence_map, (11, 11), 0)
 
             # Clean up
             del edges, dist, edge_depth, img_gray, img_rgb, img
@@ -105,7 +132,30 @@ class DepthEstimator:
     def _detect_scene_type(self, img_gray, img_rgb, height, width):
         """Detect scene type to apply appropriate depth strategy"""
 
-        # Check for horizontal lines (indoor rooms often have strong horizontal edges)
+        # Check for floor plan characteristics first (high priority)
+        # Floor plans have: mostly white background, dark walls, many rectangular shapes
+
+        # Calculate color distribution
+        avg_brightness = np.mean(img_gray)
+        std_brightness = np.std(img_gray)
+
+        # Count pixels that are very dark (walls) vs very light (floors/rooms)
+        dark_pixels = np.sum(img_gray < 100)  # Dark walls
+        light_pixels = np.sum(img_gray > 200)  # White floors/background
+        total_pixels = img_gray.size
+
+        dark_ratio = dark_pixels / total_pixels
+        light_ratio = light_pixels / total_pixels
+
+        # Floor plans typically have:
+        # - High average brightness (mostly white)
+        # - High contrast (dark walls vs white floors)
+        # - Many straight lines (both horizontal and vertical)
+        is_mostly_white = avg_brightness > 200
+        is_high_contrast = std_brightness > 60
+        has_significant_dark_lines = dark_ratio > 0.05 and dark_ratio < 0.3
+        has_significant_white_space = light_ratio > 0.5
+
         edges = cv2.Canny(img_gray, 50, 150)
         lines = cv2.HoughLinesP(edges, 1, np.pi/180, 50, minLineLength=width//4, maxLineGap=20)
 
@@ -121,6 +171,15 @@ class DepthEstimator:
                 elif abs(angle - np.pi/2) < 0.3:  # Vertical
                     vertical_lines += 1
 
+        has_many_straight_lines = (horizontal_lines + vertical_lines) > 10
+
+        # Detect floor plan (PRIMARY USE CASE)
+        if (is_mostly_white and is_high_contrast and
+            has_significant_dark_lines and has_significant_white_space and
+            has_many_straight_lines):
+            del edges
+            return "floor_plan"
+
         # Check color saturation (landscapes tend to be more saturated)
         hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
         saturation = hsv[:,:,1]
@@ -134,7 +193,7 @@ class DepthEstimator:
 
         del edges, hsv, saturation
 
-        # Classify scene
+        # Classify other scene types
         if horizontal_lines > 5 and vertical_lines > 3:
             return "indoor_room"
         elif avg_saturation > 100 and horizontal_lines < 3:
@@ -143,6 +202,35 @@ class DepthEstimator:
             return "portrait"
         else:
             return "general"
+
+    def _floorplan_depth(self, img_gray, height, width):
+        """
+        Depth estimation for architectural floor plans
+        WALLS (dark pixels) = HIGH depth (extrude up to ceiling)
+        FLOORS (white pixels) = LOW depth (ground level)
+        """
+        # Invert brightness: dark = high (walls), light = low (floors)
+        # This is opposite of typical photo depth!
+        inverted = 255 - img_gray
+        depth = self._normalize(inverted.astype(np.float32))
+
+        # Enhance wall detection with thresholding
+        # Anything darker than 150 is likely a wall
+        wall_mask = img_gray < 150
+        floor_mask = img_gray > 200
+
+        # Set walls to maximum height (1.0 = ceiling height)
+        # Set floors to minimum height (0.0 = ground level)
+        depth[wall_mask] = 1.0  # Walls at full ceiling height
+        depth[floor_mask] = 0.0  # Floors at ground level
+
+        # Areas in between (150-200) get gradient depth
+        mid_mask = (img_gray >= 150) & (img_gray <= 200)
+        if np.any(mid_mask):
+            mid_values = 1.0 - self._normalize(img_gray[mid_mask].astype(np.float32))
+            depth[mid_mask] = mid_values
+
+        return depth
 
     def _indoor_depth(self, img_gray, height, width):
         """Depth estimation for indoor rooms - subtle for photo-like appearance"""
