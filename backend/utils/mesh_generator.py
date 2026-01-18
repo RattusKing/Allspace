@@ -91,16 +91,16 @@ class MeshGenerator:
         y = np.arange(0, height)
         x_grid, y_grid = np.meshgrid(x, y)
 
-        # Create flat textured plane (Facebook 3D Photo style)
-        # Uses minimal depth for clean, photo-realistic appearance
+        # Create scene-aware 3D mesh with moderate depth
+        # Uses smoothed depth estimation for clean, professional appearance
 
         # Normalize coordinates to -1 to 1 range for clean positioning
         x_normalized = (x_grid - width / 2.0) / (width / 2.0)
         y_normalized = (y_grid - height / 2.0) / (height / 2.0)
 
-        # VERY small depth scale for nearly-flat appearance
-        # This creates a clean photo look, not messy geometry
-        depth_scale = 0.15
+        # Moderate depth scale for visible but clean 3D effect
+        # This creates actual 3D depth while staying professional-looking
+        depth_scale = 0.8
 
         # Apply depth (positive Z = above grid, not under it!)
         z = depth_map * depth_scale
