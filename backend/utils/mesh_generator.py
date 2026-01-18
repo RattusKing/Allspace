@@ -91,16 +91,28 @@ class MeshGenerator:
         y = np.arange(0, height)
         x_grid, y_grid = np.meshgrid(x, y)
 
-        # Create scene-aware 3D mesh with moderate depth
-        # Uses smoothed depth estimation for clean, professional appearance
+        # Create 3D mesh optimized for architectural floor plans
+        # Also works for photos with increased depth effect
 
         # Normalize coordinates to -1 to 1 range for clean positioning
         x_normalized = (x_grid - width / 2.0) / (width / 2.0)
         y_normalized = (y_grid - height / 2.0) / (height / 2.0)
 
-        # Moderate depth scale for visible but clean 3D effect
-        # This creates actual 3D depth while staying professional-looking
-        depth_scale = 0.8
+        # Detect if this is a floor plan (bimodal depth distribution)
+        # Floor plans have lots of 0s (floors) and 1s (walls), not much in between
+        low_depth = np.sum((depth_map >= 0.0) & (depth_map < 0.2)) / depth_map.size
+        high_depth = np.sum((depth_map >= 0.8) & (depth_map <= 1.0)) / depth_map.size
+        is_floor_plan = (low_depth + high_depth) > 0.6  # 60%+ is either floor or wall
+
+        if is_floor_plan:
+            # Higher depth scale for architectural visualization
+            # Represents 8-10 foot ceiling height
+            depth_scale = 1.8
+            print(f"  🏗️  Architectural mode: Using depth scale {depth_scale} for room height")
+        else:
+            # Moderate depth scale for photo-realistic 3D
+            depth_scale = 0.8
+            print(f"  📸 Photo mode: Using depth scale {depth_scale} for subtle 3D effect")
 
         # Apply depth (positive Z = above grid, not under it!)
         z = depth_map * depth_scale
