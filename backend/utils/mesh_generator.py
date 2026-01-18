@@ -37,14 +37,30 @@ class MeshGenerator:
 
             height, width = depth_map.shape
 
-            # Create mesh directly from depth map
-            mesh = self._depth_to_mesh(
-                depth_map,
-                image,
-                width,
-                height,
-                confidence_map
-            )
+            # Detect if this is a floor plan (bimodal depth distribution)
+            low_depth = np.sum((depth_map >= 0.0) & (depth_map < 0.2)) / depth_map.size
+            high_depth = np.sum((depth_map >= 0.8) & (depth_map <= 1.0)) / depth_map.size
+            is_floor_plan = (low_depth + high_depth) > 0.6
+
+            if is_floor_plan:
+                # Use architectural mesh generation (wall extrusion)
+                print("  🏗️  Floor plan detected - using architectural wall extrusion")
+                mesh = self._architectural_mesh(
+                    depth_map,
+                    image,
+                    width,
+                    height
+                )
+            else:
+                # Use traditional heightmap mesh generation
+                print("  📸 Photo mode - using heightmap mesh generation")
+                mesh = self._depth_to_mesh(
+                    depth_map,
+                    image,
+                    width,
+                    height,
+                    confidence_map
+                )
 
             print(f"✅ Generated base mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
 
@@ -91,28 +107,15 @@ class MeshGenerator:
         y = np.arange(0, height)
         x_grid, y_grid = np.meshgrid(x, y)
 
-        # Create 3D mesh optimized for architectural floor plans
-        # Also works for photos with increased depth effect
+        # Create 3D heightmap mesh for photos
+        # (Floor plans use _architectural_mesh instead)
 
         # Normalize coordinates to -1 to 1 range for clean positioning
         x_normalized = (x_grid - width / 2.0) / (width / 2.0)
         y_normalized = (y_grid - height / 2.0) / (height / 2.0)
 
-        # Detect if this is a floor plan (bimodal depth distribution)
-        # Floor plans have lots of 0s (floors) and 1s (walls), not much in between
-        low_depth = np.sum((depth_map >= 0.0) & (depth_map < 0.2)) / depth_map.size
-        high_depth = np.sum((depth_map >= 0.8) & (depth_map <= 1.0)) / depth_map.size
-        is_floor_plan = (low_depth + high_depth) > 0.6  # 60%+ is either floor or wall
-
-        if is_floor_plan:
-            # Higher depth scale for architectural visualization
-            # Represents 8-10 foot ceiling height
-            depth_scale = 1.8
-            print(f"  🏗️  Architectural mode: Using depth scale {depth_scale} for room height")
-        else:
-            # Moderate depth scale for photo-realistic 3D
-            depth_scale = 0.8
-            print(f"  📸 Photo mode: Using depth scale {depth_scale} for subtle 3D effect")
+        # Moderate depth scale for photo-realistic 3D
+        depth_scale = 0.8
 
         # Apply depth (positive Z = above grid, not under it!)
         z = depth_map * depth_scale
@@ -161,6 +164,148 @@ class MeshGenerator:
 
         # Mesh is already cleaned by process=True
         return mesh
+
+    def _architectural_mesh(self, depth_map, image, width, height):
+        """
+        Create architectural 3D mesh with proper wall extrusion
+        Walls are vertical faces, floors are horizontal planes
+
+        Args:
+            depth_map: Binary-like depth (0=floor, 1=wall)
+            image: RGB image for colors
+            width, height: Dimensions
+
+        Returns:
+            mesh: Trimesh object with architectural geometry
+        """
+        # Downsample to reduce vertex count (memory optimization)
+        downsample_factor = 1
+        max_dimension = max(width, height)
+
+        if max_dimension > 256:
+            downsample_factor = 2  # 640→320, but we want even less for walls
+        if max_dimension > 512:
+            downsample_factor = 4  # 640→160 for wall detection
+
+        if downsample_factor > 1:
+            print(f"  🔽 Downsampling for wall detection: {width}x{height} → {width//downsample_factor}x{height//downsample_factor}")
+            depth_map_small = depth_map[::downsample_factor, ::downsample_factor]
+            image_small = image[::downsample_factor, ::downsample_factor]
+            h_small, w_small = depth_map_small.shape
+        else:
+            depth_map_small = depth_map
+            image_small = image
+            h_small, w_small = height, width
+
+        # Create binary wall mask (walls = high depth)
+        wall_mask = (depth_map_small > 0.5).astype(np.uint8) * 255
+
+        # Find contours of wall regions
+        contours, hierarchy = cv2.findContours(wall_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+
+        print(f"  🔍 Found {len(contours)} wall contours")
+
+        # Architectural parameters
+        ceiling_height = 2.5  # Units in 3D space (represents 8-10 feet)
+        floor_height = 0.0
+
+        # Normalize coordinates to -1 to 1 range
+        scale_x = 2.0 / w_small
+        scale_y = 2.0 / h_small
+        offset_x = -1.0
+        offset_y = -1.0
+
+        vertices = []
+        faces = []
+        colors = []
+
+        # Process each contour (outer walls and inner walls)
+        vertex_offset = 0
+        wall_color = [100, 100, 100]  # Gray walls
+
+        for contour_idx, contour in enumerate(contours):
+            # Skip tiny contours (noise/text)
+            if len(contour) < 4:
+                continue
+
+            # Approximate contour to reduce vertex count
+            epsilon = 0.01 * cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, epsilon, True)
+
+            if len(approx) < 3:
+                continue
+
+            # Create vertical wall faces along contour
+            for i in range(len(approx)):
+                p1 = approx[i][0]
+                p2 = approx[(i + 1) % len(approx)][0]
+
+                # Convert pixel coordinates to normalized 3D coordinates
+                x1 = p1[0] * scale_x + offset_x
+                y1 = -(p1[1] * scale_y + offset_y)  # Flip Y
+                x2 = p2[0] * scale_x + offset_x
+                y2 = -(p2[1] * scale_y + offset_y)  # Flip Y
+
+                # Create 4 vertices for this wall segment (rectangular face)
+                # Bottom edge
+                v0 = [x1, y1, floor_height]
+                v1 = [x2, y2, floor_height]
+                # Top edge
+                v2 = [x2, y2, ceiling_height]
+                v3 = [x1, y1, ceiling_height]
+
+                vertices.extend([v0, v1, v2, v3])
+                colors.extend([wall_color] * 4)
+
+                # Create 2 triangles for this rectangular wall face
+                base_idx = vertex_offset
+                faces.append([base_idx, base_idx + 1, base_idx + 2])
+                faces.append([base_idx, base_idx + 2, base_idx + 3])
+
+                vertex_offset += 4
+
+        # Create floor plane
+        floor_vertices = [
+            [-1.0, -1.0, floor_height],
+            [1.0, -1.0, floor_height],
+            [1.0, 1.0, floor_height],
+            [-1.0, 1.0, floor_height]
+        ]
+        floor_color = [200, 200, 200]  # Light gray floor
+
+        vertices.extend(floor_vertices)
+        colors.extend([floor_color] * 4)
+
+        # Floor faces (2 triangles)
+        base_idx = vertex_offset
+        faces.append([base_idx, base_idx + 1, base_idx + 2])
+        faces.append([base_idx, base_idx + 2, base_idx + 3])
+
+        if len(vertices) == 0:
+            print("  ⚠️  No wall geometry generated, creating simple box")
+            # Fallback: create a simple box
+            return self._create_fallback_box()
+
+        vertices = np.array(vertices, dtype=np.float32)
+        faces = np.array(faces, dtype=np.int32)
+        colors = np.array(colors, dtype=np.uint8)
+
+        print(f"  ✅ Generated {len(vertices)} vertices, {len(faces)} faces for architectural mesh")
+
+        # Create trimesh
+        mesh = trimesh.Trimesh(
+            vertices=vertices,
+            faces=faces,
+            vertex_colors=colors,
+            process=True
+        )
+
+        return mesh
+
+    def _create_fallback_box(self):
+        """Create a simple box as fallback"""
+        box = trimesh.creation.box(extents=[2.0, 2.0, 0.5])
+        return box
 
     def create_textured_mesh(self, mesh, image_data):
         """
