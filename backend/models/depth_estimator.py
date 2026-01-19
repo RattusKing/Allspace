@@ -173,7 +173,7 @@ class DepthEstimator:
         has_many_straight_lines = (horizontal_lines + vertical_lines) > 8  # More lenient (was 10)
 
         # Detect floor plan (PRIMARY USE CASE)
-        # Require at least 3 of these 4 conditions to be true
+        # More aggressive detection - only need 2 of 4 conditions OR strong white+contrast
         conditions_met = sum([
             is_mostly_white and has_significant_white_space,  # Mostly white background
             is_high_contrast,  # High contrast
@@ -181,9 +181,14 @@ class DepthEstimator:
             has_many_straight_lines  # Has architectural straight lines
         ])
 
-        if conditions_met >= 3:
+        # VERY aggressive floor plan detection
+        # If mostly white + high contrast, it's almost certainly a floor plan
+        strong_floor_plan_indicators = (is_mostly_white and has_significant_white_space and is_high_contrast)
+
+        if conditions_met >= 2 or strong_floor_plan_indicators:
             del edges
-            print(f"  📐 Floor plan detected! Conditions: white={is_mostly_white}, contrast={is_high_contrast}, dark_lines={has_significant_dark_lines}, straight_lines={has_many_straight_lines}")
+            print(f"  📐 Floor plan detected! Conditions met: {conditions_met}/4 (white={is_mostly_white}, contrast={is_high_contrast}, dark_lines={has_significant_dark_lines}, straight_lines={has_many_straight_lines})")
+            print(f"      avg_brightness={avg_brightness:.1f}, std_brightness={std_brightness:.1f}, dark_ratio={dark_ratio:.3f}, light_ratio={light_ratio:.3f}, lines={horizontal_lines + vertical_lines}")
             return "floor_plan"
 
         # Check color saturation (landscapes tend to be more saturated)
