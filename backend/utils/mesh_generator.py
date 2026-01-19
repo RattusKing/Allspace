@@ -178,14 +178,15 @@ class MeshGenerator:
         Returns:
             mesh: Trimesh object with architectural geometry
         """
-        # Downsample to reduce vertex count (memory optimization)
+        # Downsample moderately to preserve architectural detail
+        # Architects need precision, not aggressive optimization
         downsample_factor = 1
         max_dimension = max(width, height)
 
-        if max_dimension > 256:
-            downsample_factor = 2  # 640→320, but we want even less for walls
-        if max_dimension > 512:
-            downsample_factor = 4  # 640→160 for wall detection
+        # Less aggressive downsampling to preserve wall detail
+        if max_dimension > 800:
+            downsample_factor = 2  # 1280→640, 1024→512
+        # For 640x640 or smaller, NO downsampling - keep full detail
 
         if downsample_factor > 1:
             print(f"  🔽 Downsampling for wall detection: {width}x{height} → {width//downsample_factor}x{height//downsample_factor}")
@@ -193,6 +194,7 @@ class MeshGenerator:
             image_small = image[::downsample_factor, ::downsample_factor]
             h_small, w_small = depth_map_small.shape
         else:
+            print(f"  ✅ Using full resolution: {width}x{height} for maximum architectural detail")
             depth_map_small = depth_map
             image_small = image
             h_small, w_small = height, width
@@ -210,7 +212,9 @@ class MeshGenerator:
         # Floor plan in XZ plane (horizontal), walls extrude in +Y (upward)
         ceiling_height = 2.5  # Units in 3D space (represents 8-10 feet)
         floor_height = 0.0
+        wall_thickness = 0.05  # Slight wall thickness for realism
         print(f"  📐 Using Y-up orientation: Floor=XZ plane (Y={floor_height}), Walls=+Y direction (ceiling Y={ceiling_height})")
+        print(f"  🏗️  Architectural detail: Wall thickness={wall_thickness}, preserving floor plan geometry")
 
         # Normalize coordinates to -1 to 1 range
         scale_x = 2.0 / w_small
@@ -224,19 +228,35 @@ class MeshGenerator:
 
         # Process each contour (outer walls and inner walls)
         vertex_offset = 0
-        wall_color = [100, 100, 100]  # Gray walls
 
         for contour_idx, contour in enumerate(contours):
             # Skip tiny contours (noise/text)
             if len(contour) < 4:
                 continue
 
-            # Approximate contour to reduce vertex count
-            epsilon = 0.01 * cv2.arcLength(contour, True)
+            # Less aggressive contour approximation to preserve architectural detail
+            # Architects need precision - use smaller epsilon
+            epsilon = 0.002 * cv2.arcLength(contour, True)  # Much more precise (was 0.01)
             approx = cv2.approxPolyDP(contour, epsilon, True)
 
             if len(approx) < 3:
                 continue
+
+            # Sample wall color from floor plan image at contour location
+            # Use median color along the contour for realistic appearance
+            contour_colors = []
+            for point in approx:
+                px, py = point[0]
+                if 0 <= py < h_small and 0 <= px < w_small:
+                    color = image_small[py, px]
+                    contour_colors.append(color)
+
+            if len(contour_colors) > 0:
+                # Use median color for this wall segment
+                wall_color = np.median(contour_colors, axis=0).astype(np.uint8).tolist()
+            else:
+                # Fallback to neutral gray
+                wall_color = [120, 120, 120]
 
             # Create vertical wall faces along contour
             for i in range(len(approx)):
@@ -275,7 +295,7 @@ class MeshGenerator:
             [1.0, floor_height, 1.0],
             [-1.0, floor_height, 1.0]
         ]
-        floor_color = [200, 200, 200]  # Light gray floor
+        floor_color = [220, 220, 220]  # Light gray floor
 
         vertices.extend(floor_vertices)
         colors.extend([floor_color] * 4)
@@ -284,6 +304,25 @@ class MeshGenerator:
         base_idx = vertex_offset
         faces.append([base_idx, base_idx + 1, base_idx + 2])
         faces.append([base_idx, base_idx + 2, base_idx + 3])
+        vertex_offset += 4
+
+        # Create ceiling plane (horizontal XZ plane at Y=ceiling_height)
+        # Professional architectural viz typically shows ceiling
+        ceiling_vertices = [
+            [-1.0, ceiling_height, -1.0],  # X, Y, Z
+            [1.0, ceiling_height, -1.0],
+            [1.0, ceiling_height, 1.0],
+            [-1.0, ceiling_height, 1.0]
+        ]
+        ceiling_color = [240, 240, 240]  # Very light gray ceiling
+
+        vertices.extend(ceiling_vertices)
+        colors.extend([ceiling_color] * 4)
+
+        # Ceiling faces (2 triangles) - reversed winding for downward-facing normals
+        base_idx = vertex_offset
+        faces.append([base_idx, base_idx + 2, base_idx + 1])
+        faces.append([base_idx, base_idx + 3, base_idx + 2])
 
         if len(vertices) == 0:
             print("  ⚠️  No wall geometry generated, creating simple box")
