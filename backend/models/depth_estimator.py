@@ -108,15 +108,16 @@ class DepthEstimator:
                 # 0.0 = floor level, 1.0 = ceiling height (8-10 feet)
                 depth_map = depth_map  # Already 0-1, keep full range
                 confidence_map = np.ones_like(depth_map) * 0.95  # High confidence for floor plans
+                # Clean up (floor plans don't use edges/dist/edge_depth)
+                del img_gray, img_rgb, img
             else:
                 # Other scenes use moderate depth range (0.2-0.8 = 60% variation)
                 depth_map = 0.2 + depth_map * 0.6
                 # Confidence based on edge strength
                 confidence_map = 1.0 - (self._normalize(edges.astype(np.float32)) * 0.3)
                 confidence_map = cv2.GaussianBlur(confidence_map, (11, 11), 0)
-
-            # Clean up
-            del edges, dist, edge_depth, img_gray, img_rgb, img
+                # Clean up
+                del edges, dist, edge_depth, img_gray, img_rgb, img
 
             print(f"✅ Depth map created: {depth_map.shape}")
             print(f"   Range: {depth_map.min():.3f} - {depth_map.max():.3f} (moderate 3D effect)")
