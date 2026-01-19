@@ -206,14 +206,17 @@ class MeshGenerator:
         print(f"  🔍 Found {len(contours)} wall contours")
 
         # Architectural parameters
+        # Use Y-up coordinate system (industry standard)
+        # Floor plan in XZ plane (horizontal), walls extrude in +Y (upward)
         ceiling_height = 2.5  # Units in 3D space (represents 8-10 feet)
         floor_height = 0.0
+        print(f"  📐 Using Y-up orientation: Floor=XZ plane (Y={floor_height}), Walls=+Y direction (ceiling Y={ceiling_height})")
 
         # Normalize coordinates to -1 to 1 range
         scale_x = 2.0 / w_small
-        scale_y = 2.0 / h_small
+        scale_z = 2.0 / h_small  # Changed from scale_y - this is now depth (Z)
         offset_x = -1.0
-        offset_y = -1.0
+        offset_z = -1.0  # Changed from offset_y
 
         vertices = []
         faces = []
@@ -241,18 +244,19 @@ class MeshGenerator:
                 p2 = approx[(i + 1) % len(approx)][0]
 
                 # Convert pixel coordinates to normalized 3D coordinates
+                # Floor plan is in XZ plane (horizontal), walls extrude in +Y (up)
                 x1 = p1[0] * scale_x + offset_x
-                y1 = -(p1[1] * scale_y + offset_y)  # Flip Y
+                z1 = -(p1[1] * scale_z + offset_z)  # Image Y → 3D Z (depth), flipped
                 x2 = p2[0] * scale_x + offset_x
-                y2 = -(p2[1] * scale_y + offset_y)  # Flip Y
+                z2 = -(p2[1] * scale_z + offset_z)  # Image Y → 3D Z (depth), flipped
 
                 # Create 4 vertices for this wall segment (rectangular face)
-                # Bottom edge
-                v0 = [x1, y1, floor_height]
-                v1 = [x2, y2, floor_height]
-                # Top edge
-                v2 = [x2, y2, ceiling_height]
-                v3 = [x1, y1, ceiling_height]
+                # Bottom edge (floor level, Y=0)
+                v0 = [x1, floor_height, z1]  # X, Y, Z
+                v1 = [x2, floor_height, z2]
+                # Top edge (ceiling level, Y=2.5)
+                v2 = [x2, ceiling_height, z2]
+                v3 = [x1, ceiling_height, z1]
 
                 vertices.extend([v0, v1, v2, v3])
                 colors.extend([wall_color] * 4)
@@ -264,19 +268,19 @@ class MeshGenerator:
 
                 vertex_offset += 4
 
-        # Create floor plane
+        # Create floor plane (horizontal XZ plane at Y=0)
         floor_vertices = [
-            [-1.0, -1.0, floor_height],
-            [1.0, -1.0, floor_height],
-            [1.0, 1.0, floor_height],
-            [-1.0, 1.0, floor_height]
+            [-1.0, floor_height, -1.0],  # X, Y, Z
+            [1.0, floor_height, -1.0],
+            [1.0, floor_height, 1.0],
+            [-1.0, floor_height, 1.0]
         ]
         floor_color = [200, 200, 200]  # Light gray floor
 
         vertices.extend(floor_vertices)
         colors.extend([floor_color] * 4)
 
-        # Floor faces (2 triangles)
+        # Floor faces (2 triangles) - order matters for proper normal direction
         base_idx = vertex_offset
         faces.append([base_idx, base_idx + 1, base_idx + 2])
         faces.append([base_idx, base_idx + 2, base_idx + 3])
