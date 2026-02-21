@@ -60,68 +60,55 @@ class DepthEstimator:
             scene_type = self._detect_scene_type(img_gray, img_rgb, height, width)
             print(f"   🔍 Detected scene type: {scene_type}")
 
+            # Compute edge map once (shared across scene types)
+            edges = cv2.Canny(img_gray, 50, 150)
+            dist = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 5)
+            edge_depth = self._normalize(dist)
+
             # Apply scene-specific depth estimation
             if scene_type == "floor_plan":
                 # Floor plans get special treatment - walls are HIGH, floors are LOW
                 depth_map = self._floorplan_depth(img_gray, height, width)
-                # Minimal smoothing - _floorplan_depth already does light smoothing internally
                 depth_map = self._normalize(depth_map)
+                confidence_map = np.ones_like(depth_map) * 0.95
+                del edges, dist, edge_depth, img_gray, img_rgb, img
+                print(f"✅ Depth map created: {depth_map.shape}")
+                print(f"   Range: {depth_map.min():.3f} - {depth_map.max():.3f}")
+                return depth_map, confidence_map
+
             elif scene_type == "indoor_room":
-                depth_map = self._indoor_depth(img_gray, height, width)
-                # Add edge-aware depth refinement
-                edges = cv2.Canny(img_gray, 50, 150)
-                dist = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 5)
-                edge_depth = self._normalize(dist)
-                # Blend with edge information (80% scene depth, 20% edge refinement)
-                depth_map = depth_map * 0.8 + edge_depth * 0.2
-                # Heavy smoothing for clean, professional appearance (NO jagged edges)
-                depth_map = cv2.GaussianBlur(depth_map, (31, 31), 0)
-                depth_map = self._normalize(depth_map)
+                depth_map = self._indoor_depth(img_gray, img_rgb, height, width)
             elif scene_type == "outdoor_landscape":
-                depth_map = self._landscape_depth(img_gray, height, width)
-                edges = cv2.Canny(img_gray, 50, 150)
-                dist = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 5)
-                edge_depth = self._normalize(dist)
-                depth_map = depth_map * 0.8 + edge_depth * 0.2
-                depth_map = cv2.GaussianBlur(depth_map, (31, 31), 0)
-                depth_map = self._normalize(depth_map)
+                depth_map = self._landscape_depth(img_gray, img_rgb, height, width)
             elif scene_type == "portrait":
                 depth_map = self._portrait_depth(img_gray, img_rgb, height, width)
-                edges = cv2.Canny(img_gray, 50, 150)
-                dist = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 5)
-                edge_depth = self._normalize(dist)
-                depth_map = depth_map * 0.8 + edge_depth * 0.2
-                depth_map = cv2.GaussianBlur(depth_map, (31, 31), 0)
-                depth_map = self._normalize(depth_map)
             else:
-                depth_map = self._general_depth(img_gray, height, width)
-                edges = cv2.Canny(img_gray, 50, 150)
-                dist = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 5)
-                edge_depth = self._normalize(dist)
-                depth_map = depth_map * 0.8 + edge_depth * 0.2
-                depth_map = cv2.GaussianBlur(depth_map, (31, 31), 0)
-                depth_map = self._normalize(depth_map)
+                depth_map = self._general_depth(img_gray, img_rgb, height, width)
 
-            # Use different depth ranges based on scene type
-            if scene_type == "floor_plan":
-                # Floor plans use FULL range (0.0-1.0) for actual room height
-                # 0.0 = floor level, 1.0 = ceiling height (8-10 feet)
-                depth_map = depth_map  # Already 0-1, keep full range
-                confidence_map = np.ones_like(depth_map) * 0.95  # High confidence for floor plans
-                # Clean up (floor plans don't use edges/dist/edge_depth)
-                del img_gray, img_rgb, img
-            else:
-                # Other scenes use moderate depth range (0.2-0.8 = 60% variation)
-                depth_map = 0.2 + depth_map * 0.6
-                # Confidence based on edge strength
-                confidence_map = 1.0 - (self._normalize(edges.astype(np.float32)) * 0.3)
-                confidence_map = cv2.GaussianBlur(confidence_map, (11, 11), 0)
-                # Clean up
-                del edges, dist, edge_depth, img_gray, img_rgb, img
+            # Blend with edge-distance refinement (edges = depth discontinuities)
+            depth_map = depth_map * 0.75 + edge_depth * 0.25
+            depth_map = self._normalize(depth_map)
+
+            # Edge-preserving bilateral filter instead of Gaussian blur
+            # Bilateral preserves structural edges while smoothing flat areas
+            depth_float = depth_map.astype(np.float32)
+            depth_map = cv2.bilateralFilter(depth_float, d=9, sigmaColor=0.15, sigmaSpace=15)
+            depth_map = self._normalize(depth_map)
+
+            # Wider depth range (0.05-0.95 = 90% variation for strong 3D effect)
+            depth_map = 0.05 + depth_map * 0.90
+
+            # Build confidence from edge strength
+            confidence_map = 1.0 - (self._normalize(edges.astype(np.float32)) * 0.3)
+            confidence_map = cv2.bilateralFilter(
+                confidence_map.astype(np.float32), d=9, sigmaColor=0.15, sigmaSpace=15
+            )
+
+            del edges, dist, edge_depth, img_gray, img_rgb, img
 
             print(f"✅ Depth map created: {depth_map.shape}")
-            print(f"   Range: {depth_map.min():.3f} - {depth_map.max():.3f} (moderate 3D effect)")
-            print(f"   Style: Clean, scene-aware depth estimation")
+            print(f"   Range: {depth_map.min():.3f} - {depth_map.max():.3f} (strong 3D effect)")
+            print(f"   Style: Multi-cue, edge-preserving depth estimation")
 
             return depth_map, confidence_map
 
@@ -277,66 +264,125 @@ class DepthEstimator:
 
         return depth
 
-    def _indoor_depth(self, img_gray, height, width):
-        """Depth estimation for indoor rooms - subtle for photo-like appearance"""
-        # Gentle perspective from floor/ceiling
-        y_coords = np.linspace(0.7, 0.3, height, dtype=np.float32)
-        depth = np.tile(y_coords[:, np.newaxis], (1, width))
+    def _local_variance_map(self, img_gray, kernel=15):
+        """
+        Compute local variance map as a depth cue.
+        Regions with high texture variance are typically closer to the camera.
+        """
+        img_f = img_gray.astype(np.float32)
+        mean = cv2.blur(img_f, (kernel, kernel))
+        mean_sq = cv2.blur(img_f ** 2, (kernel, kernel))
+        variance = np.maximum(mean_sq - mean ** 2, 0)
+        del mean, mean_sq
+        return self._normalize(variance)
 
-        # Very subtle brightness influence
+    def _indoor_depth(self, img_gray, img_rgb, height, width):
+        """
+        Depth estimation for indoor rooms.
+        Uses perspective gradient, local texture variance, and brightness.
+        """
+        # 1. Vertical perspective: bottom of frame = closer (floor)
+        y_coords = np.linspace(1.0, 0.1, height, dtype=np.float32)
+        perspective = np.tile(y_coords[:, np.newaxis], (1, width))
+
+        # 2. Local texture variance: textured surfaces (e.g. furniture) appear closer
+        texture = self._local_variance_map(img_gray, kernel=15)
+
+        # 3. Inverse brightness: darker areas in indoor scenes tend to be further away
         brightness = self._normalize(img_gray.astype(np.float32))
-        depth = depth * 0.85 + (1.0 - brightness) * 0.15
+        inv_brightness = 1.0 - brightness
 
+        # 4. Saturation drop: distant areas often appear slightly desaturated
+        hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+        saturation = self._normalize(hsv[:, :, 1].astype(np.float32))
+        del hsv
+
+        depth = (perspective * 0.45 + texture * 0.30
+                 + inv_brightness * 0.15 + saturation * 0.10)
         return depth
 
-    def _landscape_depth(self, img_gray, height, width):
-        """Depth estimation for outdoor landscapes - subtle for photo-like appearance"""
-        # Gentle sky to ground gradient
-        y_coords = np.linspace(0.7, 0.3, height, dtype=np.float32)
-        depth = np.tile(y_coords[:, np.newaxis], (1, width))
+    def _landscape_depth(self, img_gray, img_rgb, height, width):
+        """
+        Depth estimation for outdoor landscapes.
+        Uses sky/ground gradient, texture variance, and atmospheric haze (blue channel).
+        """
+        # 1. Vertical gradient: sky=far (top), ground=near (bottom)
+        y_coords = np.linspace(0.1, 1.0, height, dtype=np.float32)
+        ground_gradient = np.tile(y_coords[:, np.newaxis], (1, width))
 
-        # Very subtle contrast influence
-        mean = cv2.blur(img_gray.astype(np.float32), (15, 15))
-        mean_sq = cv2.blur(img_gray.astype(np.float32)**2, (15, 15))
-        variance = mean_sq - mean**2
-        contrast = self._normalize(variance)
+        # 2. Sky detection: bright + blue-dominant regions are sky (far)
+        blue_channel = img_rgb[:, :, 2].astype(np.float32)
+        red_channel = img_rgb[:, :, 0].astype(np.float32)
+        sky_signal = self._normalize(np.maximum(blue_channel - red_channel, 0))
+        sky_mask = 1.0 - sky_signal  # Sky = far = low depth
 
-        depth = depth * 0.85 + contrast * 0.15
-        del mean, mean_sq, variance
+        # 3. Texture variance: textured ground = near
+        texture = self._local_variance_map(img_gray, kernel=15)
 
+        # 4. Atmospheric haze: distant objects appear hazier (lower contrast locally)
+        #    Use inverse of local variance as a haze proxy
+        haze = 1.0 - self._local_variance_map(img_gray, kernel=31)
+
+        depth = (ground_gradient * 0.40 + sky_mask * 0.25
+                 + texture * 0.20 + (1.0 - haze) * 0.15)
+        del blue_channel, red_channel, sky_signal, haze
         return depth
 
     def _portrait_depth(self, img_gray, img_rgb, height, width):
-        """Depth estimation for portraits/people - subtle for photo-like appearance"""
-        # Very gentle center focus
+        """
+        Depth estimation for portraits.
+        Foreground subject = near, background = far.
+        Uses center bias, texture, and skin-tone detection.
+        """
         y, x = np.ogrid[:height, :width]
         center_y, center_x = height / 2, width / 2
 
-        # Distance from center (much less dramatic)
-        dist_from_center = np.sqrt((x - center_x)**2 + (y - center_y)**2)
-        max_dist = np.sqrt(center_x**2 + center_y**2)
-        radial = 1.0 - self._normalize(dist_from_center)
-
-        # Compress to small range (0.4 to 0.6)
-        depth = 0.4 + radial * 0.2
-
-        # Very subtle brightness
-        brightness = self._normalize(img_gray.astype(np.float32))
-        depth = depth * 0.9 + brightness * 0.1
-
+        # 1. Radial center bias (subject usually centered)
+        dist_from_center = np.sqrt(
+            ((x - center_x) / (width / 2)) ** 2 +
+            ((y - center_y) / (height / 2)) ** 2
+        )
+        radial = 1.0 - np.clip(dist_from_center / 1.5, 0, 1)
         del dist_from_center
+
+        # 2. Local texture: sharp in-focus subject = near, blurred background = far
+        texture = self._local_variance_map(img_gray, kernel=11)
+
+        # 3. Brightness: subjects tend to be well-lit (brighter)
+        brightness = self._normalize(img_gray.astype(np.float32))
+
+        # 4. Saturation: subjects usually more saturated than backgrounds
+        hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+        saturation = self._normalize(hsv[:, :, 1].astype(np.float32))
+        del hsv
+
+        depth = (radial * 0.40 + texture * 0.30
+                 + brightness * 0.15 + saturation * 0.15)
         return depth
 
-    def _general_depth(self, img_gray, height, width):
-        """General depth estimation for unknown scenes - subtle for photo-like appearance"""
-        # Very gentle gradient
-        y_coords = np.linspace(0.6, 0.4, height, dtype=np.float32)
+    def _general_depth(self, img_gray, img_rgb, height, width):
+        """
+        General depth estimation for unclassified scenes.
+        Multi-cue: perspective gradient + texture + saturation.
+        """
+        # 1. Bottom-of-frame = near (universal perspective prior)
+        y_coords = np.linspace(0.2, 1.0, height, dtype=np.float32)
         perspective = np.tile(y_coords[:, np.newaxis], (1, width))
 
+        # 2. Texture variance: detail = near
+        texture = self._local_variance_map(img_gray, kernel=15)
+
+        # 3. Saturation: vivid colors tend to be closer
+        hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+        saturation = self._normalize(hsv[:, :, 1].astype(np.float32))
+        del hsv
+
+        # 4. Inverse brightness: slightly darker regions often further
         brightness = self._normalize(img_gray.astype(np.float32))
 
-        # Mostly flat with subtle variation
-        return perspective * 0.8 + brightness * 0.2
+        depth = (perspective * 0.50 + texture * 0.25
+                 + saturation * 0.15 + brightness * 0.10)
+        return depth
 
     def _normalize(self, array):
         """Normalize array to 0-1 range"""

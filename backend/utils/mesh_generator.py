@@ -30,11 +30,16 @@ class MeshGenerator:
             image_data: Original image data for texturing
         """
         try:
-            # Load image
+            # Load image (match depth map dimensions for vertex color fallback)
             image = cv2.imread(image_path)
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            image_data = image.copy()
 
+            # Resize image to match depth map dimensions
+            dh, dw = depth_map.shape
+            if image.shape[:2] != (dh, dw):
+                image = cv2.resize(image, (dw, dh), interpolation=cv2.INTER_LANCZOS4)
+
+            image_data = image.copy()
             height, width = depth_map.shape
 
             # Detect if this is a floor plan (bimodal depth distribution)
@@ -52,14 +57,15 @@ class MeshGenerator:
                     height
                 )
             else:
-                # Use traditional heightmap mesh generation
-                print("  📸 Photo mode - using heightmap mesh generation")
+                # Use UV-textured heightmap mesh for photos
+                print("  📸 Photo mode - using heightmap mesh with UV texture")
                 mesh = self._depth_to_mesh(
                     depth_map,
                     image,
                     width,
                     height,
-                    confidence_map
+                    confidence_map,
+                    image_path=image_path
                 )
 
             print(f"✅ Generated base mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
@@ -70,99 +76,126 @@ class MeshGenerator:
             print(f"❌ Error creating mesh: {e}")
             raise
 
-    def _depth_to_mesh(self, depth_map, image, width, height, confidence_map=None):
+    def _depth_to_mesh(self, depth_map, image, width, height, confidence_map=None,
+                       image_path=None):
         """
-        Convert depth map directly to mesh using trimesh
+        Convert depth map to a UV-textured 3D heightmap mesh.
+
+        Uses the original full-resolution image as a texture for maximum fidelity,
+        with UV coordinates that map each vertex to the correct pixel.
 
         Args:
             depth_map: 2D depth values
-            image: RGB image
+            image: RGB image (potentially downsampled)
             width, height: Image dimensions
             confidence_map: Optional confidence values
+            image_path: Path to original image for high-quality texture
 
         Returns:
-            mesh: Trimesh object
+            mesh: Trimesh object with UV texture or vertex colors
         """
-        # Aggressive downsampling to stay under 512MB memory limit
-        # Target: ~100K vertices max (320x320 = 102,400)
-        downsample_factor = 1
+        # Determine target mesh resolution (stay under 512MB)
         max_dimension = max(width, height)
-
         if max_dimension > 512:
-            downsample_factor = 2  # 640x640 → 320x320
-        if max_dimension > 1024:
-            downsample_factor = 4  # 1280x1280 → 320x320
+            target_w = int(width * 512 / max_dimension)
+            target_h = int(height * 512 / max_dimension)
+        else:
+            target_w, target_h = width, height
 
-        if downsample_factor > 1:
-            print(f"  🔽 Downsampling mesh from {width}x{height} by factor {downsample_factor} to reduce memory usage")
-            depth_map = depth_map[::downsample_factor, ::downsample_factor]
-            image = image[::downsample_factor, ::downsample_factor]
+        if target_w != width or target_h != height:
+            print(f"  🔽 Downsampling mesh {width}x{height} → {target_w}x{target_h} (INTER_AREA)")
+            # INTER_AREA averages pixels correctly (no aliasing vs stride slicing)
+            depth_map = cv2.resize(depth_map, (target_w, target_h),
+                                   interpolation=cv2.INTER_AREA)
+            image = cv2.resize(image, (target_w, target_h),
+                               interpolation=cv2.INTER_AREA)
             if confidence_map is not None:
-                confidence_map = confidence_map[::downsample_factor, ::downsample_factor]
-            height, width = depth_map.shape
-            print(f"  ✅ Mesh resolution: {width}x{height} = {width * height} vertices")
+                confidence_map = cv2.resize(confidence_map, (target_w, target_h),
+                                            interpolation=cv2.INTER_AREA)
+            width, height = target_w, target_h
 
-        # Create coordinate grids
-        x = np.arange(0, width)
-        y = np.arange(0, height)
-        x_grid, y_grid = np.meshgrid(x, y)
+        print(f"  ✅ Mesh resolution: {width}x{height} = {width * height} vertices")
 
-        # Create 3D heightmap mesh for photos
-        # (Floor plans use _architectural_mesh instead)
-
-        # Normalize coordinates to -1 to 1 range for clean positioning
-        x_normalized = (x_grid - width / 2.0) / (width / 2.0)
-        y_normalized = (y_grid - height / 2.0) / (height / 2.0)
-
-        # Moderate depth scale for photo-realistic 3D
-        depth_scale = 0.8
-
-        # Apply depth (positive Z = above grid, not under it!)
-        z = depth_map * depth_scale
-
-        # Create flat plane coordinates
-        x_3d = x_normalized
-        y_3d = y_normalized
-
-        # Flatten arrays (Z is POSITIVE for above grid)
-        vertices = np.stack([x_3d.flatten(), -y_3d.flatten(), z.flatten()], axis=1)
-
-        # Get colors from image
-        vertex_colors = image.reshape(-1, 3)
-
-        # Disable confidence filtering for now - it causes face generation bugs
-        # Just use all vertices
-
-        # Create grid triangulation directly
-        faces = []
-
-        # Create faces from grid (every quad becomes 2 triangles)
-        for i in range(height - 1):
-            for j in range(width - 1):
-                # Current vertex index
-                idx = i * width + j
-
-                # Indices of the quad's 4 corners
-                v0 = idx
-                v1 = idx + 1
-                v2 = idx + width
-                v3 = idx + width + 1
-
-                # Create two triangles for this quad
-                faces.append([v0, v1, v2])
-                faces.append([v1, v3, v2])
-
-        faces = np.array(faces, dtype=np.int32)
-
-        # Create trimesh object
-        mesh = trimesh.Trimesh(
-            vertices=vertices,
-            faces=faces,
-            vertex_colors=vertex_colors,
-            process=True  # Auto-process: validates, removes degenerates, merges vertices
+        # Pre-process depth: bilateral filter smooths flat regions while
+        # keeping hard depth edges (object boundaries) sharp
+        depth_smooth = cv2.bilateralFilter(
+            depth_map.astype(np.float32), d=7, sigmaColor=0.05, sigmaSpace=7
         )
 
-        # Mesh is already cleaned by process=True
+        # Stronger depth scale for clearly visible 3D effect
+        depth_scale = 1.5
+
+        # Build vertex positions on a regular grid
+        # Coordinate system: X=right, Y=up (from image), Z=depth
+        x = np.arange(0, width, dtype=np.float32)
+        y = np.arange(0, height, dtype=np.float32)
+        x_grid, y_grid = np.meshgrid(x, y)
+
+        x_norm = (x_grid - width / 2.0) / (width / 2.0)   # -1 to 1
+        y_norm = (y_grid - height / 2.0) / (height / 2.0)  # -1 to 1
+
+        z = depth_smooth * depth_scale
+
+        # Stack into Nx3 vertex array (Y-up: flip image Y so top→positive)
+        vertices = np.stack([
+            x_norm.flatten(),
+            -y_norm.flatten(),   # flip: image row 0 = top = +Y in 3D
+            z.flatten()
+        ], axis=1).astype(np.float32)
+
+        # UV coordinates (u=0..1 left→right, v=0..1 top→bottom for image space)
+        u = (x_grid / (width - 1)).flatten().astype(np.float32)
+        v = (y_grid / (height - 1)).flatten().astype(np.float32)
+        uv_coords = np.stack([u, 1.0 - v], axis=1)  # flip V for OpenGL convention
+
+        # Build face index array vectorised (much faster than Python loop)
+        row_idx = np.arange(height - 1)
+        col_idx = np.arange(width - 1)
+        rr, cc = np.meshgrid(row_idx, col_idx, indexing='ij')
+        v0 = (rr * width + cc).flatten()
+        v1 = v0 + 1
+        v2 = v0 + width
+        v3 = v0 + width + 1
+        # Two triangles per quad (counter-clockwise winding, Y-up)
+        faces = np.concatenate([
+            np.stack([v0, v1, v2], axis=1),
+            np.stack([v1, v3, v2], axis=1)
+        ], axis=0).astype(np.int32)
+
+        # Try to build a UV-textured mesh using the original full-res image
+        # so the texture exactly matches the 2D source photo.
+        mesh = None
+        if image_path is not None:
+            try:
+                from PIL import Image as PILImage
+                pil_img = PILImage.open(image_path).convert("RGB")
+                material = trimesh.visual.material.SimpleMaterial(image=pil_img)
+                texture_visuals = trimesh.visual.TextureVisuals(
+                    uv=uv_coords,
+                    material=material
+                )
+                mesh = trimesh.Trimesh(
+                    vertices=vertices,
+                    faces=faces,
+                    visual=texture_visuals,
+                    process=False  # Keep vertex order for UV correctness
+                )
+                print("  🖼️  UV-textured mesh created from original image")
+            except Exception as tex_err:
+                print(f"  ⚠️  UV texture failed ({tex_err}), falling back to vertex colors")
+                mesh = None
+
+        if mesh is None:
+            # Fallback: vertex colors (still higher quality with INTER_AREA downsampling)
+            vertex_colors = image.reshape(-1, 3)
+            mesh = trimesh.Trimesh(
+                vertices=vertices,
+                faces=faces,
+                vertex_colors=vertex_colors,
+                process=True
+            )
+            print("  🎨 Vertex-colored mesh created")
+
         return mesh
 
     def _architectural_mesh(self, depth_map, image, width, height):
@@ -179,20 +212,17 @@ class MeshGenerator:
             mesh: Trimesh object with architectural geometry
         """
         # Downsample moderately to preserve architectural detail
-        # Architects need precision, not aggressive optimization
-        downsample_factor = 1
+        # Use INTER_AREA for correct area-averaging (no stride aliasing)
         max_dimension = max(width, height)
 
-        # Less aggressive downsampling to preserve wall detail
         if max_dimension > 800:
-            downsample_factor = 2  # 1280→640, 1024→512
-        # For 640x640 or smaller, NO downsampling - keep full detail
-
-        if downsample_factor > 1:
-            print(f"  🔽 Downsampling for wall detection: {width}x{height} → {width//downsample_factor}x{height//downsample_factor}")
-            depth_map_small = depth_map[::downsample_factor, ::downsample_factor]
-            image_small = image[::downsample_factor, ::downsample_factor]
-            h_small, w_small = depth_map_small.shape
+            target_dim = 640
+            tw = int(width * target_dim / max_dimension)
+            th = int(height * target_dim / max_dimension)
+            print(f"  🔽 Downsampling for wall detection: {width}x{height} → {tw}x{th} (INTER_AREA)")
+            depth_map_small = cv2.resize(depth_map, (tw, th), interpolation=cv2.INTER_AREA)
+            image_small = cv2.resize(image, (tw, th), interpolation=cv2.INTER_AREA)
+            h_small, w_small = th, tw
         else:
             print(f"  ✅ Using full resolution: {width}x{height} for maximum architectural detail")
             depth_map_small = depth_map
