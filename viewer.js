@@ -46,6 +46,12 @@ class ModelViewer {
         this.renderer.setPixelRatio(window.devicePixelRatio);
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        // Use sRGB output so colours match the original 2D image accurately
+        if (THREE.SRGBColorSpace !== undefined) {
+            this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+        } else if (THREE.sRGBEncoding !== undefined) {
+            this.renderer.outputEncoding = THREE.sRGBEncoding; // Three.js r128 compat
+        }
         this.container.appendChild(this.renderer.domElement);
 
         // Add orbit controls
@@ -73,11 +79,11 @@ class ModelViewer {
     }
 
     addLights() {
-        // Ambient light for overall illumination
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        // Bright neutral ambient so vertex/texture colors show accurately
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
         this.scene.add(ambientLight);
 
-        // Directional light (sun)
+        // Primary directional light (neutral white, no colour cast)
         const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
         dirLight.position.set(5, 10, 5);
         dirLight.castShadow = true;
@@ -91,19 +97,16 @@ class ModelViewer {
         dirLight.shadow.mapSize.height = 2048;
         this.scene.add(dirLight);
 
-        // Hemisphere light for more natural lighting
-        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.4);
+        // Fill light from opposite side to reduce harsh shadows
+        const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
+        fillLight.position.set(-5, 5, -5);
+        this.scene.add(fillLight);
+
+        // Neutral hemisphere light (sky=white, ground=light gray)
+        // Removed coloured tint that was distorting mesh colours
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0xcccccc, 0.3);
         hemiLight.position.set(0, 20, 0);
         this.scene.add(hemiLight);
-
-        // Add point lights for extra illumination
-        const pointLight1 = new THREE.PointLight(0x6366f1, 0.5);
-        pointLight1.position.set(-5, 5, -5);
-        this.scene.add(pointLight1);
-
-        const pointLight2 = new THREE.PointLight(0x8b5cf6, 0.5);
-        pointLight2.position.set(5, 5, 5);
-        this.scene.add(pointLight2);
     }
 
     addGrid() {
@@ -134,14 +137,30 @@ class ModelViewer {
                 console.log('✅ Model loaded successfully');
                 this.model = gltf.scene;
 
-                // Enable shadows
+                // Configure each mesh for correct colour and shadow rendering
                 this.model.traverse((child) => {
                     if (child.isMesh) {
                         child.castShadow = true;
                         child.receiveShadow = true;
 
-                        // Ensure materials are visible
                         if (child.material) {
+                            // Render both sides so thin planes are always visible
+                            child.material.side = THREE.DoubleSide;
+
+                            // If the mesh has vertex colours, ensure they are enabled
+                            if (child.geometry && child.geometry.attributes.color) {
+                                child.material.vertexColors = true;
+                            }
+
+                            // If the mesh has a map (UV texture), ensure encoding is correct
+                            if (child.material.map) {
+                                if (THREE.SRGBColorSpace !== undefined) {
+                                    child.material.map.colorSpace = THREE.SRGBColorSpace;
+                                } else if (THREE.sRGBEncoding !== undefined) {
+                                    child.material.map.encoding = THREE.sRGBEncoding;
+                                }
+                            }
+
                             child.material.needsUpdate = true;
                         }
                     }
