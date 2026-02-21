@@ -67,14 +67,23 @@ class DepthEstimator:
 
             # Apply scene-specific depth estimation
             if scene_type == "floor_plan":
-                # Floor plans get special treatment - walls are HIGH, floors are LOW
                 depth_map = self._floorplan_depth(img_gray, height, width)
                 depth_map = self._normalize(depth_map)
                 confidence_map = np.ones_like(depth_map) * 0.95
                 del edges, dist, edge_depth, img_gray, img_rgb, img
                 print(f"✅ Depth map created: {depth_map.shape}")
                 print(f"   Range: {depth_map.min():.3f} - {depth_map.max():.3f}")
-                return depth_map, confidence_map
+                return depth_map, confidence_map, scene_type
+
+            elif scene_type == "building_facade":
+                # Facade depth uses layer-based assignment (sky/wall/ground/windows)
+                # rather than a noisy gradient – this drives the proper box mesh.
+                depth_map = self._facade_depth(img_gray, img_rgb, height, width)
+                confidence_map = np.ones_like(depth_map) * 0.90
+                del edges, dist, edge_depth, img_gray, img_rgb, img
+                print(f"✅ Facade depth map: {depth_map.shape}, "
+                      f"range {depth_map.min():.3f} – {depth_map.max():.3f}")
+                return depth_map, confidence_map, scene_type
 
             elif scene_type == "indoor_room":
                 depth_map = self._indoor_depth(img_gray, img_rgb, height, width)
@@ -90,7 +99,6 @@ class DepthEstimator:
             depth_map = self._normalize(depth_map)
 
             # Edge-preserving bilateral filter instead of Gaussian blur
-            # Bilateral preserves structural edges while smoothing flat areas
             depth_float = depth_map.astype(np.float32)
             depth_map = cv2.bilateralFilter(depth_float, d=9, sigmaColor=0.15, sigmaSpace=15)
             depth_map = self._normalize(depth_map)
@@ -107,10 +115,10 @@ class DepthEstimator:
             del edges, dist, edge_depth, img_gray, img_rgb, img
 
             print(f"✅ Depth map created: {depth_map.shape}")
-            print(f"   Range: {depth_map.min():.3f} - {depth_map.max():.3f} (strong 3D effect)")
+            print(f"   Range: {depth_map.min():.3f} - {depth_map.max():.3f}")
             print(f"   Style: Multi-cue, edge-preserving depth estimation")
 
-            return depth_map, confidence_map
+            return depth_map, confidence_map, scene_type
 
         except Exception as e:
             print(f"❌ Error estimating depth: {e}")
@@ -119,80 +127,116 @@ class DepthEstimator:
     def _detect_scene_type(self, img_gray, img_rgb, height, width):
         """Detect scene type to apply appropriate depth strategy"""
 
-        # Check for floor plan characteristics first (high priority)
-        # Floor plans have: mostly white background, dark walls, many rectangular shapes
+        # ── Sky / open-boundary analysis ────────────────────────────────────
+        # A building FACADE has sky (bright, open, touching the top border).
+        # A FLOOR PLAN has enclosed white rooms – no sky strip at the top.
+        top_strip    = img_gray[:height // 5, :]
+        bottom_strip = img_gray[4 * height // 5:, :]
+        mid_strip    = img_gray[height // 5: 4 * height // 5, :]
 
-        # Calculate color distribution
-        avg_brightness = np.mean(img_gray)
-        std_brightness = np.std(img_gray)
+        top_brightness    = float(np.mean(top_strip))
+        mid_brightness    = float(np.mean(mid_strip))
+        bottom_brightness = float(np.mean(bottom_strip))
 
-        # Count pixels that are very dark (walls) vs very light (floors/rooms)
-        dark_pixels = np.sum(img_gray < 100)  # Dark walls
-        light_pixels = np.sum(img_gray > 200)  # White floors/background
-        total_pixels = img_gray.size
+        # "Sky at top": top border is noticeably brighter than the middle AND
+        # a large fraction of the top strip is near-white (open sky / paper sky).
+        top_bright_fraction = float(np.sum(top_strip > 200)) / top_strip.size
+        sky_at_top = (top_brightness > 180
+                      and top_bright_fraction > 0.35
+                      and top_brightness > mid_brightness + 15)
 
-        dark_ratio = dark_pixels / total_pixels
-        light_ratio = light_pixels / total_pixels
-
-        # Floor plans typically have:
-        # - High average brightness (mostly white) - RELAXED from >200 to >180
-        # - High contrast (dark walls vs white floors)
-        # - Many straight lines (both horizontal and vertical)
-        is_mostly_white = avg_brightness > 180  # More lenient
-        is_high_contrast = std_brightness > 40  # More lenient (was 60)
-        has_significant_dark_lines = dark_ratio > 0.03 and dark_ratio < 0.4  # More lenient range
-        has_significant_white_space = light_ratio > 0.4  # More lenient (was 0.5)
-
+        # ── Structural line analysis (shared by floor-plan and facade) ───────
         edges = cv2.Canny(img_gray, 50, 150)
-        lines = cv2.HoughLinesP(edges, 1, np.pi/180, 30, minLineLength=width//6, maxLineGap=30)  # More lenient
-
+        lines = cv2.HoughLinesP(
+            edges, 1, np.pi / 180, 30,
+            minLineLength=width // 6, maxLineGap=30
+        )
         horizontal_lines = 0
-        vertical_lines = 0
-
+        vertical_lines   = 0
         if lines is not None:
             for line in lines:
                 x1, y1, x2, y2 = line[0]
                 angle = abs(np.arctan2(y2 - y1, x2 - x1))
-                if angle < 0.3 or angle > (np.pi - 0.3):  # Horizontal
+                if angle < 0.3 or angle > (np.pi - 0.3):
                     horizontal_lines += 1
-                elif abs(angle - np.pi/2) < 0.3:  # Vertical
+                elif abs(angle - np.pi / 2) < 0.3:
                     vertical_lines += 1
 
-        has_many_straight_lines = (horizontal_lines + vertical_lines) > 8  # More lenient (was 10)
+        has_many_straight_lines = (horizontal_lines + vertical_lines) > 8
 
-        # Detect floor plan (PRIMARY USE CASE)
-        # More aggressive detection - only need 2 of 4 conditions OR strong white+contrast
-        conditions_met = sum([
-            is_mostly_white and has_significant_white_space,  # Mostly white background
-            is_high_contrast,  # High contrast
-            has_significant_dark_lines,  # Has wall-like dark elements
-            has_many_straight_lines  # Has architectural straight lines
-        ])
+        # ── Building facade detection (checked BEFORE floor plan) ─────────
+        # Criteria: sky at top + building has significant structural lines.
+        # Elevation drawings with coloured walls are also caught here.
+        hsv_full = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+        mid_saturation = float(np.mean(hsv_full[height // 5: 4 * height // 5, :, 1]))
+        del hsv_full
 
-        # VERY aggressive floor plan detection
-        # If mostly white + high contrast, it's almost certainly a floor plan
-        strong_floor_plan_indicators = (is_mostly_white and has_significant_white_space and is_high_contrast)
+        # A facade also shows sky-to-ground brightness contrast
+        sky_ground_contrast = abs(top_brightness - bottom_brightness)
 
-        if conditions_met >= 2 or strong_floor_plan_indicators:
+        is_building_facade = (
+            sky_at_top
+            and has_many_straight_lines
+            and (mid_saturation > 15 or sky_ground_contrast > 25)
+        )
+
+        if is_building_facade:
             del edges
-            print(f"  📐 Floor plan detected! Conditions met: {conditions_met}/4 (white={is_mostly_white}, contrast={is_high_contrast}, dark_lines={has_significant_dark_lines}, straight_lines={has_many_straight_lines})")
-            print(f"      avg_brightness={avg_brightness:.1f}, std_brightness={std_brightness:.1f}, dark_ratio={dark_ratio:.3f}, light_ratio={light_ratio:.3f}, lines={horizontal_lines + vertical_lines}")
+            print(f"  🏠 Building facade detected! "
+                  f"sky_at_top={sky_at_top}, lines={horizontal_lines+vertical_lines}, "
+                  f"mid_sat={mid_saturation:.1f}, sky_ground_contrast={sky_ground_contrast:.1f}")
+            return "building_facade"
+
+        # ── Floor plan detection ───────────────────────────────────────────
+        avg_brightness = float(np.mean(img_gray))
+        std_brightness = float(np.std(img_gray))
+        dark_pixels  = np.sum(img_gray < 100)
+        light_pixels = np.sum(img_gray > 200)
+        total_pixels = img_gray.size
+
+        dark_ratio  = dark_pixels  / total_pixels
+        light_ratio = light_pixels / total_pixels
+
+        is_mostly_white           = avg_brightness > 180
+        is_high_contrast          = std_brightness > 40
+        has_significant_dark_lines  = 0.03 < dark_ratio < 0.4
+        has_significant_white_space = light_ratio > 0.4
+
+        conditions_met = sum([
+            is_mostly_white and has_significant_white_space,
+            is_high_contrast,
+            has_significant_dark_lines,
+            has_many_straight_lines,
+        ])
+        strong_floor_plan = is_mostly_white and has_significant_white_space and is_high_contrast
+
+        # Only classify as floor_plan when sky-at-top is NOT present
+        # (floor plans are top-down drawings with no sky)
+        if not sky_at_top and (conditions_met >= 2 or strong_floor_plan):
+            del edges
+            print(f"  📐 Floor plan detected! conditions={conditions_met}/4 "
+                  f"(white={is_mostly_white}, contrast={is_high_contrast}, "
+                  f"dark_lines={has_significant_dark_lines}, straight={has_many_straight_lines})")
             return "floor_plan"
 
-        # Check color saturation (landscapes tend to be more saturated)
-        hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
-        saturation = hsv[:,:,1]
-        avg_saturation = np.mean(saturation)
+        # ── Other scene types ──────────────────────────────────────────────
+        hsv2 = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+        avg_saturation = float(np.mean(hsv2[:, :, 1]))
+        del hsv2
 
-        # Check if image is centered (portraits often have centered subjects)
-        center_brightness = np.mean(img_gray[height//4:3*height//4, width//4:3*width//4])
-        edge_brightness = (np.mean(img_gray[:height//4, :]) + np.mean(img_gray[3*height//4:, :]) +
-                          np.mean(img_gray[:, :width//4]) + np.mean(img_gray[:, 3*width//4:])) / 4
+        center_brightness = float(np.mean(
+            img_gray[height // 4: 3 * height // 4, width // 4: 3 * width // 4]
+        ))
+        edge_brightness = float(
+            (np.mean(img_gray[:height // 4, :])
+             + np.mean(img_gray[3 * height // 4:, :])
+             + np.mean(img_gray[:, :width // 4])
+             + np.mean(img_gray[:, 3 * width // 4:])) / 4
+        )
         center_contrast = center_brightness - edge_brightness
 
-        del edges, hsv, saturation
+        del edges
 
-        # Classify other scene types
         if horizontal_lines > 5 and vertical_lines > 3:
             return "indoor_room"
         elif avg_saturation > 100 and horizontal_lines < 3:
@@ -263,6 +307,92 @@ class DepthEstimator:
         del binary, binary_inv, cleaned, dilated, eroded, wall_mask, labels, stats, centroids
 
         return depth
+
+    def _facade_depth(self, img_gray, img_rgb, height, width):
+        """
+        Depth for building facade / elevation images.
+
+        Assigns physically plausible depth layers:
+          Sky   → very far   (0.00 – 0.10)
+          Wall  → mid        (0.42 – 0.50, flat front face)
+          Windows → recessed (wall − 0.08)
+          Roof  → protruding (wall + 0.06)
+          Ground → near      (0.65 – 0.95, perspective gradient)
+        """
+        row_means = np.mean(img_gray.astype(np.float32), axis=1)
+
+        # ── Find sky / building / ground boundaries ───────────────────────
+        top_brightness = float(np.mean(row_means[:height // 5]))
+        sky_threshold  = top_brightness * 0.80
+
+        sky_end = height // 5  # default
+        for r in range(height // 10, height // 2):
+            if row_means[r] < sky_threshold:
+                sky_end = r
+                break
+
+        # Ground starts where rows get darker again near the bottom
+        ground_start = int(height * 0.88)
+        for r in range(height - 1, height // 2, -1):
+            if row_means[r] < float(np.mean(row_means[3 * height // 4:])) * 0.95:
+                ground_start = r
+                break
+
+        building_top    = max(0, sky_end)
+        building_bottom = min(height, ground_start)
+        building_depth_val = 0.46   # depth of the flat facade wall
+
+        depth = np.full((height, width), building_depth_val, dtype=np.float32)
+
+        # Sky: gradient from 0 (very top) to 0.10 (just above building)
+        if building_top > 0:
+            sky_grad = np.linspace(0.0, 0.10, building_top, dtype=np.float32)
+            depth[:building_top, :] = sky_grad[:, np.newaxis]
+
+        # Ground: perspective gradient from 0.65 (horizon) to 0.95 (camera foot)
+        if building_bottom < height:
+            rows_ground = height - building_bottom
+            ground_grad = np.linspace(0.65, 0.95, rows_ground, dtype=np.float32)
+            depth[building_bottom:, :] = ground_grad[:, np.newaxis]
+
+        # ── Window detection: bright or dark rectangular patches in the wall ─
+        if building_top < building_bottom:
+            wall_slice = img_gray[building_top:building_bottom, :]
+            wall_med   = float(np.median(wall_slice))
+
+            # Windows brighter than the wall (common in drawings / renders)
+            bright_win = (wall_slice.astype(np.float32) > wall_med + 18).astype(np.float32)
+            # Windows darker than the wall (deep-set openings in photos)
+            dark_win   = (wall_slice.astype(np.float32) < wall_med - 18).astype(np.float32)
+
+            recess_amount   = 0.08
+            protrude_amount = 0.06   # roofline / overhang
+
+            depth[building_top:building_bottom, :] -= bright_win * recess_amount
+            depth[building_top:building_bottom, :] -= dark_win   * recess_amount
+
+            # Roofline band: top 5 % of the building region protrudes slightly
+            roof_band = max(1, (building_bottom - building_top) // 20)
+            depth[building_top: building_top + roof_band, :] += protrude_amount
+
+        # Smooth transitions at sky/wall and wall/ground junctions
+        blend = 12
+        for i in range(blend):
+            t = (i + 1) / (blend + 1)
+            r_top = building_top + i
+            r_bot = building_bottom - blend + i
+            if 0 < r_top < height:
+                depth[r_top, :] = (
+                    depth[max(0, r_top - 1), :] * (1 - t) + building_depth_val * t
+                )
+            if 0 <= r_bot < height:
+                depth[r_bot, :] = (
+                    building_depth_val * (1 - t) + depth[min(height - 1, r_bot + 1), :] * t
+                )
+
+        print(f"  🏠 Facade depth: sky_end={sky_end}, ground_start={ground_start}, "
+              f"wall_depth={building_depth_val:.2f}")
+        return self._normalize(depth)
 
     def _local_variance_map(self, img_gray, kernel=15):
         """
