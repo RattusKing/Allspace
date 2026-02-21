@@ -16,7 +16,8 @@ class MeshGenerator:
     def __init__(self):
         print("🔧 Initializing Mesh Generator (trimesh-based)")
 
-    def create_mesh_from_depth(self, image_path, depth_map, confidence_map=None):
+    def create_mesh_from_depth(self, image_path, depth_map, confidence_map=None,
+                               scene_type=None):
         """
         Create a 3D mesh from image and depth map
 
@@ -42,31 +43,28 @@ class MeshGenerator:
             image_data = image.copy()
             height, width = depth_map.shape
 
-            # Detect if this is a floor plan (bimodal depth distribution)
-            low_depth = np.sum((depth_map >= 0.0) & (depth_map < 0.2)) / depth_map.size
-            high_depth = np.sum((depth_map >= 0.8) & (depth_map <= 1.0)) / depth_map.size
-            is_floor_plan = (low_depth + high_depth) > 0.6
-
-            if is_floor_plan:
-                # Use architectural mesh generation (wall extrusion)
-                print("  🏗️  Floor plan detected - using architectural wall extrusion")
-                mesh = self._architectural_mesh(
-                    depth_map,
-                    image,
-                    width,
-                    height
+            # Choose mesh strategy based on scene type (or fall back to heuristic)
+            if scene_type == "building_facade":
+                print("  🏠 Building facade - creating extruded box model")
+                mesh = self._facade_box_mesh(
+                    depth_map, image, width, height, image_path=image_path
                 )
+            elif scene_type == "floor_plan":
+                print("  🏗️  Floor plan - using architectural wall extrusion")
+                mesh = self._architectural_mesh(depth_map, image, width, height)
             else:
-                # Use UV-textured heightmap mesh for photos
-                print("  📸 Photo mode - using heightmap mesh with UV texture")
-                mesh = self._depth_to_mesh(
-                    depth_map,
-                    image,
-                    width,
-                    height,
-                    confidence_map,
-                    image_path=image_path
-                )
+                # Heuristic fallback for scenes whose type isn't propagated
+                low_depth  = np.sum((depth_map >= 0.0) & (depth_map < 0.2)) / depth_map.size
+                high_depth = np.sum((depth_map >= 0.8) & (depth_map <= 1.0)) / depth_map.size
+                if (low_depth + high_depth) > 0.6:
+                    print("  🏗️  Floor plan heuristic - architectural wall extrusion")
+                    mesh = self._architectural_mesh(depth_map, image, width, height)
+                else:
+                    print("  📸 Photo mode - heightmap mesh with UV texture")
+                    mesh = self._depth_to_mesh(
+                        depth_map, image, width, height, confidence_map,
+                        image_path=image_path
+                    )
 
             print(f"✅ Generated base mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
 
@@ -197,6 +195,186 @@ class MeshGenerator:
             print("  🎨 Vertex-colored mesh created")
 
         return mesh
+
+    def _facade_box_mesh(self, depth_map, image, width, height, image_path=None):
+        """
+        Create a proper 3D box model for building facade / elevation images.
+
+        Structure:
+          • Front face  – subdivided plane, UV-textured from the original image
+                         so every design detail (windows, roof, colour) shows through
+          • Side walls  – extruded left/right from the building edges
+          • Roof slab   – flat plane at the roofline
+          • Ground plane – extends forward under the building
+          • Back wall   – simple coloured plane
+
+        The sky and ground regions detected from the depth map are NOT included
+        in the box geometry – they appear correctly in the UV-textured front face.
+        """
+        # ── Detect sky / ground boundaries from depth map ─────────────────
+        row_depth   = np.mean(depth_map, axis=1)
+        sky_end     = 0
+        for r in range(height):
+            if row_depth[r] > 0.20:
+                sky_end = r
+                break
+        ground_start = height - 1
+        for r in range(height - 1, height // 2, -1):
+            if row_depth[r] < 0.55:
+                ground_start = r
+                break
+
+        # Clamp so there is always a building region
+        sky_end      = min(sky_end,      int(height * 0.35))
+        ground_start = max(ground_start, int(height * 0.65))
+
+        # ── World-space layout ─────────────────────────────────────────────
+        aspect       = height / max(width, 1)
+        # Front face covers full image UV [-1,1] x [-aspect, +aspect] at Z=0
+        face_w       = 2.0           # world width of front face
+        face_h       = 2.0 * aspect  # world height of front face
+        building_d   = max(0.6, face_w * 0.45)  # how deep to extrude the box
+
+        # UV bands for sky and ground (used to compute world-Y boundaries)
+        sky_uv    = sky_end      / height        # 0-1, top of building
+        ground_uv = ground_start / height        # 0-1, bottom of building
+
+        # World Y of roofline and ground line (image V is flipped in world Y)
+        roof_y   =  face_h / 2.0 - sky_uv    * face_h   # world Y of roof
+        ground_y =  face_h / 2.0 - ground_uv * face_h   # world Y of ground line
+
+        xl = -face_w / 2.0   # left edge
+        xr =  face_w / 2.0   # right edge
+
+        # ── Helper to sample an edge colour ───────────────────────────────
+        def edge_mean(img, rows_slice, cols_slice):
+            region = img[rows_slice, cols_slice]
+            if region.size == 0:
+                return np.array([180, 170, 150], dtype=np.uint8)
+            return np.mean(region.reshape(-1, 3), axis=0).astype(np.uint8)
+
+        wall_color  = edge_mean(image, slice(sky_end, ground_start), slice(0, width))
+        left_color  = edge_mean(image, slice(sky_end, ground_start), slice(0, max(1, width // 15)))
+        right_color = edge_mean(image, slice(sky_end, ground_start), slice(max(0, width - width // 15), width))
+        roof_color  = edge_mean(image, slice(max(0, sky_end - 8), sky_end + 4), slice(0, width))
+        ground_color= edge_mean(image, slice(ground_start, min(height, ground_start + 10)), slice(0, width))
+        back_color  = np.clip((wall_color.astype(int) * 0.6).astype(int), 0, 255).astype(np.uint8)
+
+        meshes = []
+
+        # ── 1. FRONT FACE – subdivided, UV-textured ────────────────────────
+        res_x = min(width  // 4, 96)
+        res_y = min(height // 4, int(96 * aspect))
+        fu    = np.linspace(0.0, 1.0, res_x + 1, dtype=np.float32)
+        fv    = np.linspace(0.0, 1.0, res_y + 1, dtype=np.float32)
+        fvv, fuu = np.meshgrid(fv, fu, indexing='ij')
+
+        fx = (fuu - 0.5) * face_w
+        fy = (0.5 - fvv) * face_h
+        fz = np.zeros_like(fx)
+
+        front_verts = np.stack([fx.flatten(), fy.flatten(), fz.flatten()], axis=1).astype(np.float32)
+        front_uvs   = np.stack([fuu.flatten(), 1.0 - fvv.flatten()], axis=1).astype(np.float32)
+
+        nfx, nfy = res_x + 1, res_y + 1
+        ri   = np.arange(res_y)
+        ci   = np.arange(res_x)
+        rr, cc = np.meshgrid(ri, ci, indexing='ij')
+        v0  = (rr * nfx + cc).flatten()
+        front_faces = np.concatenate([
+            np.stack([v0, v0 + 1, v0 + nfx],     axis=1),
+            np.stack([v0 + 1, v0 + nfx + 1, v0 + nfx], axis=1),
+        ], axis=0).astype(np.int32)
+
+        # Vertex colours from image (for fallback)
+        img_px = np.clip((fuu.flatten() * (width  - 1)).astype(int), 0, width  - 1)
+        img_py = np.clip((fvv.flatten() * (height - 1)).astype(int), 0, height - 1)
+        front_colors = image[img_py, img_px]
+
+        if image_path is not None:
+            try:
+                from PIL import Image as PILImage
+                pil_img  = PILImage.open(image_path).convert("RGB")
+                material = trimesh.visual.material.SimpleMaterial(image=pil_img)
+                tex_vis  = trimesh.visual.TextureVisuals(uv=front_uvs, material=material)
+                front_mesh = trimesh.Trimesh(
+                    vertices=front_verts, faces=front_faces,
+                    visual=tex_vis, process=False
+                )
+                print("  🖼️  Facade front face: UV-textured from original image")
+            except Exception as tex_err:
+                print(f"  ⚠️  UV texture failed ({tex_err}), using vertex colors for front face")
+                front_mesh = trimesh.Trimesh(
+                    vertices=front_verts, faces=front_faces,
+                    vertex_colors=front_colors, process=False
+                )
+        else:
+            front_mesh = trimesh.Trimesh(
+                vertices=front_verts, faces=front_faces,
+                vertex_colors=front_colors, process=False
+            )
+        meshes.append(front_mesh)
+
+        # ── Helper: create a coloured quad ────────────────────────────────
+        def quad_mesh(v0, v1, v2, v3, color):
+            verts = np.array([v0, v1, v2, v3], dtype=np.float32)
+            faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
+            colors = np.tile(color, (4, 1))
+            m = trimesh.Trimesh(vertices=verts, faces=faces,
+                                vertex_colors=colors, process=False)
+            return m
+
+        # ── 2. LEFT SIDE WALL ─────────────────────────────────────────────
+        meshes.append(quad_mesh(
+            [xl, ground_y,  0.0],
+            [xl, roof_y,    0.0],
+            [xl, roof_y,   -building_d],
+            [xl, ground_y, -building_d],
+            left_color
+        ))
+
+        # ── 3. RIGHT SIDE WALL ────────────────────────────────────────────
+        meshes.append(quad_mesh(
+            [xr, ground_y,  0.0],
+            [xr, ground_y, -building_d],
+            [xr, roof_y,   -building_d],
+            [xr, roof_y,    0.0],
+            right_color
+        ))
+
+        # ── 4. ROOF SLAB ──────────────────────────────────────────────────
+        meshes.append(quad_mesh(
+            [xl, roof_y,  0.0],
+            [xr, roof_y,  0.0],
+            [xr, roof_y, -building_d],
+            [xl, roof_y, -building_d],
+            roof_color
+        ))
+
+        # ── 5. BACK WALL ──────────────────────────────────────────────────
+        meshes.append(quad_mesh(
+            [xl, ground_y, -building_d],
+            [xr, ground_y, -building_d],
+            [xr, roof_y,   -building_d],
+            [xl, roof_y,   -building_d],
+            back_color
+        ))
+
+        # ── 6. GROUND PLANE (extends forward in front of building) ────────
+        ground_ext = building_d * 0.8
+        meshes.append(quad_mesh(
+            [xl - 0.3, ground_y,  ground_ext],
+            [xr + 0.3, ground_y,  ground_ext],
+            [xr + 0.3, ground_y, -building_d],
+            [xl - 0.3, ground_y, -building_d],
+            ground_color
+        ))
+
+        combined = trimesh.util.concatenate(meshes)
+        print(f"  ✅ Facade box mesh: {len(combined.vertices)} vertices, "
+              f"{len(combined.faces)} faces | "
+              f"roof_y={roof_y:.2f}, ground_y={ground_y:.2f}, depth={building_d:.2f}")
+        return combined
 
     def _architectural_mesh(self, depth_map, image, width, height):
         """

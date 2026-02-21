@@ -210,13 +210,14 @@ def generate_3d():
                 # Step 1: Generate depth map
                 job['progress'] = 20
                 job['current_step'] = 'Estimating depth'
-                depth_map, confidence_map = depth_estimator.estimate_depth(image_path)
+                depth_map, confidence_map, scene_type = depth_estimator.estimate_depth(image_path)
+                job['scene_type'] = scene_type
 
                 # Step 2: Create base 3D mesh from image and depth
                 job['progress'] = 40
                 job['current_step'] = 'Generating base mesh'
                 base_mesh, image_data = mesh_generator.create_mesh_from_depth(
-                    image_path, depth_map, confidence_map
+                    image_path, depth_map, confidence_map, scene_type=scene_type
                 )
 
                 # Step 3: Procedurally generate unseen areas
