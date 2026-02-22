@@ -17,32 +17,23 @@ class ModelExporter:
 
     def export_glb(self, mesh, output_path, image_data=None):
         """
-        Export mesh to GLB format (GL Transmission Format Binary)
-
-        Args:
-            mesh: Trimesh object
-            output_path: Path to save GLB file
-            image_data: Optional texture image
-
-        Returns:
-            success: Boolean
+        Export mesh (Trimesh or trimesh.Scene) to GLB format.
+        Scene objects preserve multiple materials (e.g. UV-textured front face
+        + vertex-coloured sides on building facades).
         """
         try:
             print(f"  📦 Exporting GLB to {output_path}")
 
-            # Validate mesh before export
             if not self._validate_mesh(mesh):
                 print(f"  ❌ Mesh validation failed")
                 return False
 
-            # Ensure mesh has necessary attributes
-            if not mesh.is_watertight:
+            # trimesh.Scene and trimesh.Trimesh both support .export()
+            if not isinstance(mesh, trimesh.Scene) and not mesh.is_watertight:
                 print(f"  ⚠️  Mesh is not watertight (expected for depth-based meshes)")
 
-            # Export to GLB
             mesh.export(output_path, file_type='glb')
 
-            # Verify file was created and has content
             if os.path.exists(output_path):
                 file_size = os.path.getsize(output_path)
                 print(f"  ✅ GLB exported successfully ({file_size} bytes)")
@@ -58,37 +49,44 @@ class ModelExporter:
             return False
 
     def _validate_mesh(self, mesh):
-        """Validate mesh has valid geometry"""
+        """Validate mesh (Trimesh or Scene) has valid geometry"""
         try:
-            # Check mesh has vertices and faces
+            # ── trimesh.Scene validation ──────────────────────────────────
+            if isinstance(mesh, trimesh.Scene):
+                if len(mesh.geometry) == 0:
+                    print(f"  ❌ Scene has no geometry")
+                    return False
+                total_v = sum(len(g.vertices) for g in mesh.geometry.values())
+                total_f = sum(len(g.faces)    for g in mesh.geometry.values())
+                if total_v == 0 or total_f == 0:
+                    print(f"  ❌ Scene has empty geometry")
+                    return False
+                all_verts = np.concatenate(
+                    [g.vertices for g in mesh.geometry.values()], axis=0
+                )
+                if np.isnan(all_verts).any() or np.isinf(all_verts).any():
+                    print(f"  ❌ Scene has NaN/Inf vertices")
+                    return False
+                print(f"  ✅ Scene validation passed: {len(mesh.geometry)} meshes, "
+                      f"{total_v} vertices, {total_f} faces")
+                return True
+
+            # ── Single Trimesh validation ─────────────────────────────────
             if len(mesh.vertices) == 0:
-                print(f"  ❌ Mesh has no vertices")
-                return False
-
+                print(f"  ❌ Mesh has no vertices"); return False
             if len(mesh.faces) == 0:
-                print(f"  ❌ Mesh has no faces")
-                return False
-
-            # Check for NaN or Inf in vertices
+                print(f"  ❌ Mesh has no faces"); return False
             if np.isnan(mesh.vertices).any():
-                print(f"  ❌ Mesh has NaN vertices")
-                return False
-
+                print(f"  ❌ Mesh has NaN vertices"); return False
             if np.isinf(mesh.vertices).any():
-                print(f"  ❌ Mesh has Inf vertices")
-                return False
+                print(f"  ❌ Mesh has Inf vertices"); return False
 
-            # Check vertex range is reasonable
-            v_min = mesh.vertices.min()
-            v_max = mesh.vertices.max()
-            v_range = v_max - v_min
+            v_min, v_max = mesh.vertices.min(), mesh.vertices.max()
+            if v_max - v_min > 10000:
+                print(f"  ⚠️  Mesh has very large range: {v_max - v_min:.2f}")
 
-            if v_range > 10000:
-                print(f"  ⚠️  Mesh has very large range: {v_range:.2f}")
-
-            print(f"  ✅ Mesh validation passed: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
-            print(f"     Bounds: [{v_min:.2f}, {v_max:.2f}]")
-
+            print(f"  ✅ Mesh validation passed: {len(mesh.vertices)} vertices, "
+                  f"{len(mesh.faces)} faces | bounds [{v_min:.2f}, {v_max:.2f}]")
             return True
 
         except Exception as e:
@@ -97,30 +95,26 @@ class ModelExporter:
 
     def export_fbx(self, mesh, output_path, image_data=None):
         """
-        Export mesh to FBX format
-
-        Args:
-            mesh: Trimesh object
-            output_path: Path to save FBX file
-            image_data: Optional texture image
-
-        Returns:
-            success: Boolean
+        Export mesh to FBX format.
+        For Scene objects (multi-material facades), fall back to OBJ since
+        trimesh FBX export does not support Scene graphs.
         """
         try:
             print(f"  📦 Exporting FBX to {output_path}")
 
-            # Try to export to FBX
-            mesh.export(output_path, file_type='fbx')
+            # trimesh Scene → FBX is not supported; use OBJ instead
+            if isinstance(mesh, trimesh.Scene):
+                print(f"  ⚠️  FBX does not support multi-mesh scenes. Exporting as OBJ.")
+                obj_path = output_path.replace('.fbx', '.obj')
+                return self.export_obj(mesh, obj_path, image_data)
 
+            mesh.export(output_path, file_type='fbx')
             print(f"  ✅ FBX exported successfully")
             return True
 
         except Exception as e:
             print(f"  ❌ Error exporting FBX: {e}")
-            print(f"  ⚠️  FBX export may require additional dependencies. Exporting as OBJ instead...")
-
-            # Fallback to OBJ if FBX fails
+            print(f"  ⚠️  Falling back to OBJ export.")
             obj_path = output_path.replace('.fbx', '.obj')
             return self.export_obj(mesh, obj_path, image_data)
 
