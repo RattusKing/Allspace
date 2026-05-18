@@ -195,7 +195,8 @@ def generate_3d():
             'hallucinate_unseen': data.get('hallucinate_unseen', True),
             'room_complexity': data.get('room_complexity', 'medium'),  # low, medium, high
             'wall_thickness': data.get('wall_thickness', 0.3),
-            'generate_interiors': data.get('generate_interiors', True)
+            'generate_interiors': data.get('generate_interiors', True),
+            'floor_plan_scale': data.get('floor_plan_scale', 'auto'),  # 'auto' | '50'|'100'|'200'|'500'
         }
 
         # Start generation in background thread
@@ -216,8 +217,35 @@ def generate_3d():
                 # Step 2: Create base 3D mesh from image and depth
                 job['progress'] = 40
                 job['current_step'] = 'Generating base mesh'
+
+                # Compute real-world scale factor for floor plans.
+                # floor_plan_scale is the drawing ratio (e.g. '100' for 1:100).
+                # We assume 96 DPI scan and convert pixels → real metres so the
+                # exported GLB imports at correct scale in Revit / SketchUp.
+                import cv2 as _cv2
+                _img_shape = _cv2.imread(image_path).shape  # (h, w, c)
+                img_px_w, img_px_h = _img_shape[1], _img_shape[0]
+                del _img_shape, _cv2
+
+                scale_str = options.get('floor_plan_scale', 'auto')
+                if scale_str != 'auto' and scene_type == 'floor_plan':
+                    scale_ratio = float(scale_str)
+                    dpi = 96.0
+                    paper_width_mm  = img_px_w / dpi * 25.4
+                    paper_height_mm = img_px_h / dpi * 25.4
+                    real_width_m  = paper_width_mm  * scale_ratio / 1000.0
+                    real_height_m = paper_height_mm * scale_ratio / 1000.0
+                    # Mesh XZ range is -1..1 (2 units); scale to real metres
+                    scale_factor_x = real_width_m  / 2.0
+                    scale_factor_z = real_height_m / 2.0
+                    print(f"  📐 Scale 1:{int(scale_ratio)}: {real_width_m:.1f}m × {real_height_m:.1f}m real-world")
+                else:
+                    scale_factor_x = 1.0
+                    scale_factor_z = 1.0
+
                 base_mesh, image_data = mesh_generator.create_mesh_from_depth(
-                    image_path, depth_map, confidence_map, scene_type=scene_type
+                    image_path, depth_map, confidence_map, scene_type=scene_type,
+                    scale_factor_x=scale_factor_x, scale_factor_z=scale_factor_z
                 )
 
                 # Step 3: Procedurally generate unseen areas

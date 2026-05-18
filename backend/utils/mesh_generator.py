@@ -17,7 +17,7 @@ class MeshGenerator:
         print("🔧 Initializing Mesh Generator (trimesh-based)")
 
     def create_mesh_from_depth(self, image_path, depth_map, confidence_map=None,
-                               scene_type=None):
+                               scene_type=None, scale_factor_x=1.0, scale_factor_z=1.0):
         """
         Create a 3D mesh from image and depth map
 
@@ -51,14 +51,18 @@ class MeshGenerator:
                 )
             elif scene_type == "floor_plan":
                 print("  🏗️  Floor plan - using architectural wall extrusion")
-                mesh = self._architectural_mesh(depth_map, image, width, height)
+                mesh = self._architectural_mesh(depth_map, image, width, height,
+                                                scale_factor_x=scale_factor_x,
+                                                scale_factor_z=scale_factor_z)
             else:
                 # Heuristic fallback for scenes whose type isn't propagated
                 low_depth  = np.sum((depth_map >= 0.0) & (depth_map < 0.2)) / depth_map.size
                 high_depth = np.sum((depth_map >= 0.8) & (depth_map <= 1.0)) / depth_map.size
                 if (low_depth + high_depth) > 0.6:
                     print("  🏗️  Floor plan heuristic - architectural wall extrusion")
-                    mesh = self._architectural_mesh(depth_map, image, width, height)
+                    mesh = self._architectural_mesh(depth_map, image, width, height,
+                                                    scale_factor_x=scale_factor_x,
+                                                    scale_factor_z=scale_factor_z)
                 else:
                     print("  📸 Photo mode - heightmap mesh with UV texture")
                     mesh = self._depth_to_mesh(
@@ -375,7 +379,8 @@ class MeshGenerator:
               f"roof_y={roof_y:.2f}, ground_y={ground_y:.2f}, depth={building_d:.2f}")
         return scene
 
-    def _architectural_mesh(self, depth_map, image, width, height):
+    def _architectural_mesh(self, depth_map, image, width, height,
+                             scale_factor_x=1.0, scale_factor_z=1.0):
         """
         Create architectural 3D mesh with proper wall extrusion
         Walls are vertical faces, floors are horizontal planes
@@ -414,20 +419,22 @@ class MeshGenerator:
 
         print(f"  🔍 Found {len(contours)} wall contours")
 
-        # Architectural parameters
-        # Use Y-up coordinate system (industry standard)
-        # Floor plan in XZ plane (horizontal), walls extrude in +Y (upward)
-        ceiling_height = 2.5  # Units in 3D space (represents 8-10 feet)
+        # Architectural parameters — Y-up, floor plan in XZ plane, walls extrude +Y
+        # When a real-world scale is applied (scale_factor != 1), ceiling is 3.0m.
+        # In normalized mode (scale_factor = 1.0), keep legacy 2.5 unit height.
+        has_real_scale = (scale_factor_x != 1.0 or scale_factor_z != 1.0)
+        ceiling_height = 3.0 if has_real_scale else 2.5
         floor_height = 0.0
-        wall_thickness = 0.08  # Visible wall depth for realism
-        print(f"  📐 Using Y-up orientation: Floor=XZ plane (Y={floor_height}), Walls=+Y direction (ceiling Y={ceiling_height})")
-        print(f"  🏗️  Architectural detail: Wall thickness={wall_thickness}, preserving floor plan geometry")
+        wall_thickness = 0.08 * max(scale_factor_x, scale_factor_z) if has_real_scale else 0.08
+        print(f"  📐 Y-up: Floor=XZ (Y={floor_height}), Ceiling Y={ceiling_height:.2f}, "
+              f"scale=({scale_factor_x:.2f}, {scale_factor_z:.2f})")
 
-        # Normalize coordinates to -1 to 1 range
-        scale_x = 2.0 / w_small
-        scale_z = 2.0 / h_small  # Changed from scale_y - this is now depth (Z)
-        offset_x = -1.0
-        offset_z = -1.0  # Changed from offset_y
+        # Map pixel coordinates to 3D world space.
+        # Base range is -1..1 (2 units), then multiplied by scale_factor for real metres.
+        scale_x = 2.0 / w_small * scale_factor_x
+        scale_z = 2.0 / h_small * scale_factor_z
+        offset_x = -1.0 * scale_factor_x
+        offset_z = -1.0 * scale_factor_z
 
         vertices = []
         faces = []
@@ -537,11 +544,13 @@ class MeshGenerator:
             return self._depth_to_mesh(depth_map, image, width, height, image_path=None)
 
         # Create floor plane (horizontal XZ plane at Y=0)
+        fx = scale_factor_x
+        fz = scale_factor_z
         floor_vertices = [
-            [-1.0, floor_height, -1.0],  # X, Y, Z
-            [1.0, floor_height, -1.0],
-            [1.0, floor_height, 1.0],
-            [-1.0, floor_height, 1.0]
+            [-fx, floor_height, -fz],
+            [ fx, floor_height, -fz],
+            [ fx, floor_height,  fz],
+            [-fx, floor_height,  fz]
         ]
         # Sample a warm beige/wood tone from the image interior (floor plan paper color)
         interior_region = image_small[h_small // 4: 3 * h_small // 4,
@@ -565,12 +574,11 @@ class MeshGenerator:
         vertex_offset += 4
 
         # Create ceiling plane (horizontal XZ plane at Y=ceiling_height)
-        # Professional architectural viz typically shows ceiling
         ceiling_vertices = [
-            [-1.0, ceiling_height, -1.0],  # X, Y, Z
-            [1.0, ceiling_height, -1.0],
-            [1.0, ceiling_height, 1.0],
-            [-1.0, ceiling_height, 1.0]
+            [-fx, ceiling_height, -fz],
+            [ fx, ceiling_height, -fz],
+            [ fx, ceiling_height,  fz],
+            [-fx, ceiling_height,  fz]
         ]
         ceiling_color = [240, 240, 240]  # Very light gray ceiling
 

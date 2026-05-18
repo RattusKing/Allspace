@@ -36,6 +36,7 @@ const startOverBtn = document.getElementById('startOverBtn');
 const retryBtn = document.getElementById('retryBtn');
 const wallThicknessSlider = document.getElementById('wallThicknessSlider');
 const wallThicknessValue = document.getElementById('wallThicknessValue');
+const floorPlanScaleSelect = document.getElementById('floorPlanScaleSelect');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -164,12 +165,14 @@ async function uploadImage() {
 async function startGeneration(jobId) {
     try {
         // Get options
+        const scaleValue = floorPlanScaleSelect ? floorPlanScaleSelect.value : 'auto';
         const options = {
             job_id: jobId,
             hallucinate_unseen: document.getElementById('hallucinateCheckbox').checked,
             generate_interiors: document.getElementById('interiorsCheckbox').checked,
             room_complexity: document.getElementById('complexitySelect').value,
-            wall_thickness: parseFloat(wallThicknessSlider.value)
+            wall_thickness: parseFloat(wallThicknessSlider.value),
+            floor_plan_scale: scaleValue
         };
 
         const response = await fetch(`${API_URL}/api/generate`, {

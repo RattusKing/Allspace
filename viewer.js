@@ -1,6 +1,7 @@
 /**
  * Three.js 3D Model Viewer
- * Renders and allows interaction with generated 3D models
+ * Renders and allows interaction with generated 3D models.
+ * Supports Orbit mode (default) and first-person Walk mode (WASD + mouse look).
  */
 
 class ModelViewer {
@@ -12,6 +13,19 @@ class ModelViewer {
         this.controls = null;
         this.model = null;
         this.animationId = null;
+
+        // Walk mode state
+        this.walkMode = false;
+        this.walkYaw = 0;
+        this.walkPitch = 0;
+        this.walkKeys = {};
+        this.walkSpeed = 3.0;
+        this.prevFrameTime = performance.now();
+
+        this._boundMouseMove = this._onMouseMoveWalk.bind(this);
+        this._boundPointerLockChange = this._onPointerLockChange.bind(this);
+        this._boundKeyDown = (e) => { this.walkKeys[e.code] = true; };
+        this._boundKeyUp = (e) => { this.walkKeys[e.code] = false; };
 
         this.init();
     }
@@ -25,65 +39,57 @@ class ModelViewer {
         const width = this.container.clientWidth;
         const height = this.container.clientHeight;
 
-        // Create scene
+        // Scene
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x1e293b);
         this.scene.fog = new THREE.Fog(0x1e293b, 10, 50);
 
-        // Create camera
-        this.camera = new THREE.PerspectiveCamera(
-            75,
-            width / height,
-            0.1,
-            1000
-        );
+        // Camera
+        this.camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
         this.camera.position.set(5, 5, 5);
         this.camera.lookAt(0, 0, 0);
 
-        // Create renderer
+        // Renderer
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
         this.renderer.setSize(width, height);
         this.renderer.setPixelRatio(window.devicePixelRatio);
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-        // Use sRGB output so colours match the original 2D image accurately
         if (THREE.SRGBColorSpace !== undefined) {
             this.renderer.outputColorSpace = THREE.SRGBColorSpace;
         } else if (THREE.sRGBEncoding !== undefined) {
-            this.renderer.outputEncoding = THREE.sRGBEncoding; // Three.js r128 compat
+            this.renderer.outputEncoding = THREE.sRGBEncoding;
         }
         this.container.appendChild(this.renderer.domElement);
 
-        // Add orbit controls
+        // Orbit controls
         this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.05;
         this.controls.screenSpacePanning = false;
-        this.controls.minDistance = 1;
+        this.controls.minDistance = 0.5;
         this.controls.maxDistance = 50;
         this.controls.maxPolarAngle = Math.PI;
 
-        // Add lights
         this.addLights();
-
-        // Add grid helper
         this.addGrid();
 
-        // Handle window resize
+        // Global event listeners for walk mode
+        document.addEventListener('mousemove', this._boundMouseMove);
+        document.addEventListener('pointerlockchange', this._boundPointerLockChange);
+        document.addEventListener('keydown', this._boundKeyDown);
+        document.addEventListener('keyup', this._boundKeyUp);
+
         window.addEventListener('resize', () => this.onWindowResize());
 
-        // Start animation loop
         this.animate();
-
         console.log('✅ 3D Viewer initialized');
     }
 
     addLights() {
-        // Bright neutral ambient so vertex/texture colors show accurately
         const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
         this.scene.add(ambientLight);
 
-        // Primary directional light (neutral white, no colour cast)
         const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
         dirLight.position.set(5, 10, 5);
         dirLight.castShadow = true;
@@ -97,24 +103,19 @@ class ModelViewer {
         dirLight.shadow.mapSize.height = 2048;
         this.scene.add(dirLight);
 
-        // Fill light from opposite side to reduce harsh shadows
         const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
         fillLight.position.set(-5, 5, -5);
         this.scene.add(fillLight);
 
-        // Neutral hemisphere light (sky=white, ground=light gray)
-        // Removed coloured tint that was distorting mesh colours
         const hemiLight = new THREE.HemisphereLight(0xffffff, 0xcccccc, 0.3);
         hemiLight.position.set(0, 20, 0);
         this.scene.add(hemiLight);
     }
 
     addGrid() {
-        // Add grid helper
         const gridHelper = new THREE.GridHelper(20, 20, 0x4a5568, 0x334155);
         this.scene.add(gridHelper);
 
-        // Add axes helper
         const axesHelper = new THREE.AxesHelper(5);
         this.scene.add(axesHelper);
     }
@@ -122,37 +123,30 @@ class ModelViewer {
     loadModel(url) {
         console.log(`📥 Loading 3D model: ${url}`);
 
-        // Remove existing model if any
         if (this.model) {
             this.scene.remove(this.model);
             this.model = null;
         }
 
-        // Show loading indicator
         const loader = new THREE.GLTFLoader();
-
         loader.load(
             url,
             (gltf) => {
                 console.log('✅ Model loaded successfully');
                 this.model = gltf.scene;
 
-                // Configure each mesh for correct colour and shadow rendering
                 this.model.traverse((child) => {
                     if (child.isMesh) {
                         child.castShadow = true;
                         child.receiveShadow = true;
 
                         if (child.material) {
-                            // Render both sides so thin planes are always visible
                             child.material.side = THREE.DoubleSide;
 
-                            // If the mesh has vertex colours, ensure they are enabled
                             if (child.geometry && child.geometry.attributes.color) {
                                 child.material.vertexColors = true;
                             }
 
-                            // If the mesh has a map (UV texture), ensure encoding is correct
                             if (child.material.map) {
                                 if (THREE.SRGBColorSpace !== undefined) {
                                     child.material.map.colorSpace = THREE.SRGBColorSpace;
@@ -166,13 +160,8 @@ class ModelViewer {
                     }
                 });
 
-                // Center and scale model
                 this.centerModel(this.model);
-
-                // Add to scene
                 this.scene.add(this.model);
-
-                // Adjust camera to fit model
                 this.fitCameraToModel(this.model);
 
                 console.log('🎨 Model added to scene');
@@ -189,22 +178,17 @@ class ModelViewer {
     }
 
     centerModel(model) {
-        // Calculate bounding box
         const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
         const size = box.getSize(new THREE.Vector3());
 
-        // Center the model
         model.position.sub(center);
 
-        // Scale model if it's too large or too small
         const maxDim = Math.max(size.x, size.y, size.z);
         if (maxDim > 10) {
-            const scale = 10 / maxDim;
-            model.scale.multiplyScalar(scale);
+            model.scale.multiplyScalar(10 / maxDim);
         } else if (maxDim < 1) {
-            const scale = 2 / maxDim;
-            model.scale.multiplyScalar(scale);
+            model.scale.multiplyScalar(2 / maxDim);
         }
 
         console.log(`Model size: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`);
@@ -217,9 +201,7 @@ class ModelViewer {
 
         const maxDim = Math.max(size.x, size.y, size.z);
         const fov = this.camera.fov * (Math.PI / 180);
-        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-
-        cameraZ *= 2; // Add some extra distance
+        const cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 2;
 
         this.camera.position.set(center.x + cameraZ, center.y + cameraZ, center.z + cameraZ);
         this.camera.lookAt(center);
@@ -227,55 +209,161 @@ class ModelViewer {
         this.controls.update();
     }
 
-    showErrorMessage() {
-        // Add a text sprite showing error
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.width = 512;
-        canvas.height = 256;
+    // ── Walk Mode ─────────────────────────────────────────────────────────────
 
-        context.fillStyle = '#ef4444';
-        context.font = 'bold 32px Arial';
-        context.textAlign = 'center';
-        context.fillText('Error loading model', 256, 128);
-
-        const texture = new THREE.CanvasTexture(canvas);
-        const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
-        const sprite = new THREE.Sprite(spriteMaterial);
-        sprite.scale.set(5, 2.5, 1);
-        this.scene.add(sprite);
+    toggleWalkMode() {
+        if (!this.walkMode) {
+            this._enterWalkMode();
+        } else {
+            this._exitWalkMode();
+        }
     }
+
+    _enterWalkMode() {
+        this.walkMode = true;
+        this.controls.enabled = false;
+
+        // Position camera at eye height above the model floor
+        if (this.model) {
+            const box = new THREE.Box3().setFromObject(this.model);
+            this.camera.position.y = box.min.y + 1.6;
+        }
+
+        // Derive initial yaw from current camera orientation
+        const dir = new THREE.Vector3();
+        this.camera.getWorldDirection(dir);
+        this.walkYaw = Math.atan2(-dir.x, -dir.z);
+        this.walkPitch = 0;
+
+        this.camera.rotation.order = 'YXZ';
+        this.camera.rotation.y = this.walkYaw;
+        this.camera.rotation.x = this.walkPitch;
+
+        // Request pointer lock so mouse controls look direction
+        this.renderer.domElement.requestPointerLock();
+
+        this._setWalkUI(true);
+    }
+
+    _exitWalkMode() {
+        this.walkMode = false;
+        this.controls.enabled = true;
+        this.walkKeys = {};
+
+        if (document.pointerLockElement === this.renderer.domElement) {
+            document.exitPointerLock();
+        }
+
+        this._setWalkUI(false);
+    }
+
+    _setWalkUI(active) {
+        const btn = document.getElementById('walkToggleBtn');
+        const hint = document.getElementById('viewerHint');
+        const crosshair = document.getElementById('walkCrosshair');
+
+        if (active) {
+            if (btn) { btn.textContent = '🚶 Exit Walk'; btn.classList.add('active'); }
+            if (hint) hint.textContent = 'WASD: Move • Mouse: Look • Space/Shift: Up/Down • ESC: Exit';
+            if (crosshair) crosshair.classList.remove('hidden');
+        } else {
+            if (btn) { btn.textContent = '🚶 Walk Mode'; btn.classList.remove('active'); }
+            if (hint) hint.textContent = '🖱️ Left-click + drag: Rotate • Right-click + drag: Pan • Scroll: Zoom';
+            if (crosshair) crosshair.classList.add('hidden');
+        }
+    }
+
+    _onPointerLockChange() {
+        // Browser releases pointer lock on ESC — exit walk mode to stay in sync
+        if (document.pointerLockElement !== this.renderer.domElement && this.walkMode) {
+            this._exitWalkMode();
+        }
+    }
+
+    _onMouseMoveWalk(e) {
+        if (!this.walkMode || document.pointerLockElement !== this.renderer.domElement) return;
+
+        const sensitivity = 0.002;
+        this.walkYaw -= e.movementX * sensitivity;
+        this.walkPitch -= e.movementY * sensitivity;
+        // Clamp pitch so you can't flip upside down
+        this.walkPitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, this.walkPitch));
+
+        this.camera.rotation.y = this.walkYaw;
+        this.camera.rotation.x = this.walkPitch;
+    }
+
+    _updateWalkMovement(dt) {
+        // Get flattened forward vector (ignore Y so moving forward doesn't pitch down)
+        const camDir = new THREE.Vector3();
+        this.camera.getWorldDirection(camDir);
+        const forward = new THREE.Vector3(camDir.x, 0, camDir.z).normalize();
+        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+        const speed = this.walkSpeed;
+        const move = new THREE.Vector3();
+
+        if (this.walkKeys['KeyW'] || this.walkKeys['ArrowUp'])    move.addScaledVector(forward,  speed * dt);
+        if (this.walkKeys['KeyS'] || this.walkKeys['ArrowDown'])  move.addScaledVector(forward, -speed * dt);
+        if (this.walkKeys['KeyA'] || this.walkKeys['ArrowLeft'])  move.addScaledVector(right,   -speed * dt);
+        if (this.walkKeys['KeyD'] || this.walkKeys['ArrowRight']) move.addScaledVector(right,    speed * dt);
+        if (this.walkKeys['Space'])                               move.y += speed * dt;
+        if (this.walkKeys['ShiftLeft'] || this.walkKeys['ShiftRight']) move.y -= speed * dt;
+
+        this.camera.position.add(move);
+    }
+
+    // ── Render Loop ───────────────────────────────────────────────────────────
 
     animate() {
         this.animationId = requestAnimationFrame(() => this.animate());
 
-        // Update controls
-        this.controls.update();
+        const now = performance.now();
+        const dt = Math.min((now - this.prevFrameTime) / 1000, 0.1); // cap delta to avoid jumps
+        this.prevFrameTime = now;
 
-        // Rotate model slowly if desired
-        // if (this.model) {
-        //     this.model.rotation.y += 0.001;
-        // }
+        if (this.walkMode) {
+            this._updateWalkMovement(dt);
+        } else {
+            this.controls.update();
+        }
 
-        // Render scene
         this.renderer.render(this.scene, this.camera);
     }
 
     onWindowResize() {
         const width = this.container.clientWidth;
         const height = this.container.clientHeight;
-
         this.camera.aspect = width / height;
         this.camera.updateProjectionMatrix();
-
         this.renderer.setSize(width, height);
     }
 
+    showErrorMessage() {
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = 512;
+        canvas.height = 256;
+        context.fillStyle = '#ef4444';
+        context.font = 'bold 32px Arial';
+        context.textAlign = 'center';
+        context.fillText('Error loading model', 256, 128);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture }));
+        sprite.scale.set(5, 2.5, 1);
+        this.scene.add(sprite);
+    }
+
     dispose() {
-        // Clean up
-        if (this.animationId) {
-            cancelAnimationFrame(this.animationId);
-        }
+        if (this.walkMode) this._exitWalkMode();
+
+        document.removeEventListener('mousemove', this._boundMouseMove);
+        document.removeEventListener('pointerlockchange', this._boundPointerLockChange);
+        document.removeEventListener('keydown', this._boundKeyDown);
+        document.removeEventListener('keyup', this._boundKeyUp);
+
+        if (this.animationId) cancelAnimationFrame(this.animationId);
 
         if (this.renderer) {
             this.renderer.dispose();
@@ -284,19 +372,14 @@ class ModelViewer {
             }
         }
 
-        if (this.controls) {
-            this.controls.dispose();
-        }
+        if (this.controls) this.controls.dispose();
 
-        // Clear scene
         if (this.scene) {
             this.scene.traverse((object) => {
-                if (object.geometry) {
-                    object.geometry.dispose();
-                }
+                if (object.geometry) object.geometry.dispose();
                 if (object.material) {
                     if (Array.isArray(object.material)) {
-                        object.material.forEach(material => material.dispose());
+                        object.material.forEach(m => m.dispose());
                     } else {
                         object.material.dispose();
                     }
@@ -308,10 +391,10 @@ class ModelViewer {
     }
 }
 
-// Global viewer instance
+// ── Global API ────────────────────────────────────────────────────────────────
+
 let viewer = null;
 
-// Function to load model (called from app.js)
 function loadModel(url) {
     if (!viewer) {
         viewer = new ModelViewer('viewer3d');
@@ -319,7 +402,11 @@ function loadModel(url) {
     viewer.loadModel(url);
 }
 
-// Expose to global scope
+function toggleWalkMode() {
+    if (viewer) viewer.toggleWalkMode();
+}
+
 window.viewer = viewer;
 window.loadModel = loadModel;
+window.toggleWalkMode = toggleWalkMode;
 window.ModelViewer = ModelViewer;
