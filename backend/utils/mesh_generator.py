@@ -439,10 +439,44 @@ class MeshGenerator:
         vertices = []
         faces = []
         colors = []
-        wall_vertex_count = 0  # track separately so fallback check is before floor/ceiling
-
-        # Process each contour (outer walls and inner walls)
+        wall_vertex_count = 0
         vertex_offset = 0
+
+        def _add_wall_quad(xa, za, xb, zb, y_bot, y_top, color):
+            nonlocal vertex_offset
+            if y_top <= y_bot:
+                return
+            seg_dx = xb - xa;  seg_dz = zb - za
+            seg_len = max(np.sqrt(seg_dx**2 + seg_dz**2), 1e-6)
+            # Perpendicular offset for wall thickness (inner face)
+            nx = seg_dz / seg_len * wall_thickness
+            nz = -seg_dx / seg_len * wall_thickness
+            inner_c = [min(255, int(c) + 15) for c in color]
+            top_c   = [min(255, int(c) + 30) for c in color]
+
+            # Outer face
+            vertices.extend([[xa, y_bot, za], [xb, y_bot, zb], [xb, y_top, zb], [xa, y_top, za]])
+            colors.extend([color] * 4)
+            b = vertex_offset
+            faces.extend([[b, b+1, b+2], [b, b+2, b+3]])
+            vertex_offset += 4
+
+            # Inner face (reversed winding so normal faces inward)
+            vertices.extend([[xa+nx, y_bot, za+nz], [xb+nx, y_bot, zb+nz],
+                              [xb+nx, y_top, zb+nz], [xa+nx, y_top, za+nz]])
+            colors.extend([inner_c] * 4)
+            b = vertex_offset
+            faces.extend([[b+2, b+1, b], [b+3, b+2, b]])
+            vertex_offset += 4
+
+            # Top cap (only at full ceiling height to avoid floating caps on lintels)
+            if abs(y_top - ceiling_height) < 0.05:
+                vertices.extend([[xa, y_top, za], [xb, y_top, zb],
+                                  [xb+nx, y_top, zb+nz], [xa+nx, y_top, za+nz]])
+                colors.extend([top_c] * 4)
+                b = vertex_offset
+                faces.extend([[b, b+1, b+2], [b, b+2, b+3]])
+                vertex_offset += 4
 
         for contour_idx, contour in enumerate(contours):
             # Skip tiny contours (noise/text)
@@ -463,18 +497,12 @@ class MeshGenerator:
             for point in approx:
                 px, py = point[0]
                 if 0 <= py < h_small and 0 <= px < w_small:
-                    color = image_small[py, px]
-                    contour_colors.append(color)
+                    contour_colors.append(image_small[py, px])
+            wall_color = (np.median(contour_colors, axis=0).astype(np.uint8).tolist()
+                          if contour_colors else [120, 120, 120])
 
-            if len(contour_colors) > 0:
-                # Use median color for this wall segment
-                wall_color = np.median(contour_colors, axis=0).astype(np.uint8).tolist()
-            else:
-                # Fallback to neutral gray
-                wall_color = [120, 120, 120]
+            door_top = min(2.1 * (ceiling_height / 3.0), ceiling_height - 0.1)
 
-            # Compute a normal offset direction for wall thickness
-            # Normal = perpendicular to contour direction, scaled to wall_thickness
             seg_count = len(approx)
             for i in range(seg_count):
                 p1 = approx[i][0]
@@ -485,47 +513,30 @@ class MeshGenerator:
                 x2 = p2[0] * scale_x + offset_x
                 z2 = -(p2[1] * scale_z + offset_z)
 
-                # Compute wall normal (perpendicular to segment, in XZ plane)
-                seg_dx = x2 - x1
-                seg_dz = z2 - z1
-                seg_len = max(np.sqrt(seg_dx**2 + seg_dz**2), 1e-6)
-                nx = -seg_dz / seg_len * wall_thickness
-                nz =  seg_dx / seg_len * wall_thickness
+                openings = self._detect_segment_openings(
+                    image_small, p1[0], p1[1], p2[0], p2[1], h_small, w_small
+                )
 
-                # Outer face (visible from outside the wall)
-                v0 = [x1, floor_height,   z1]
-                v1 = [x2, floor_height,   z2]
-                v2 = [x2, ceiling_height, z2]
-                v3 = [x1, ceiling_height, z1]
-                vertices.extend([v0, v1, v2, v3])
-                colors.extend([wall_color] * 4)
-                base_idx = vertex_offset
-                faces.append([base_idx, base_idx + 1, base_idx + 2])
-                faces.append([base_idx, base_idx + 2, base_idx + 3])
-                vertex_offset += 4
-
-                # Inner face (visible from inside the room) — offset by wall normal
-                inner_color = [min(255, int(c) + 15) for c in wall_color]  # slightly lighter
-                v4 = [x1 + nx, floor_height,   z1 + nz]
-                v5 = [x2 + nx, floor_height,   z2 + nz]
-                v6 = [x2 + nx, ceiling_height, z2 + nz]
-                v7 = [x1 + nx, ceiling_height, z1 + nz]
-                vertices.extend([v4, v5, v6, v7])
-                colors.extend([inner_color] * 4)
-                base_idx = vertex_offset
-                # Reversed winding so inner face normal points inward
-                faces.append([base_idx + 2, base_idx + 1, base_idx])
-                faces.append([base_idx + 3, base_idx + 2, base_idx])
-                vertex_offset += 4
-
-                # Top cap (wall top face between outer and inner)
-                top_color = [min(255, int(c) + 30) for c in wall_color]
-                vertices.extend([v3, v2, v6, v7])
-                colors.extend([top_color] * 4)
-                base_idx = vertex_offset
-                faces.append([base_idx, base_idx + 1, base_idx + 2])
-                faces.append([base_idx, base_idx + 2, base_idx + 3])
-                vertex_offset += 4
+                if not openings:
+                    _add_wall_quad(x1, z1, x2, z2, floor_height, ceiling_height, wall_color)
+                else:
+                    prev_t = 0.0
+                    for gap_s, gap_e in openings:
+                        # Solid wall section before this opening
+                        if gap_s > prev_t + 0.02:
+                            xa = x1 + (x2 - x1) * prev_t;  za = z1 + (z2 - z1) * prev_t
+                            xb = x1 + (x2 - x1) * gap_s;   zb = z1 + (z2 - z1) * gap_s
+                            _add_wall_quad(xa, za, xb, zb, floor_height, ceiling_height, wall_color)
+                        # Lintel only over the opening (door height to ceiling)
+                        xc = x1 + (x2 - x1) * gap_s;  zc = z1 + (z2 - z1) * gap_s
+                        xd = x1 + (x2 - x1) * gap_e;  zd = z1 + (z2 - z1) * gap_e
+                        lintel_c = [min(255, int(c) + 25) for c in wall_color]
+                        _add_wall_quad(xc, zc, xd, zd, door_top, ceiling_height, lintel_c)
+                        prev_t = gap_e
+                    # Solid wall section after last opening
+                    if prev_t < 0.98:
+                        xa = x1 + (x2 - x1) * prev_t;  za = z1 + (z2 - z1) * prev_t
+                        _add_wall_quad(xa, za, x2, z2, floor_height, ceiling_height, wall_color)
 
         wall_vertex_count = vertex_offset  # all verts so far are wall geometry
 
@@ -539,56 +550,41 @@ class MeshGenerator:
             if contours_retry:
                 depth_retry = wall_mask_retry.astype(np.float32) / 255.0
                 img_retry = image_small if max_dimension > 800 else image
-                return self._architectural_mesh(depth_retry, img_retry, w_small, h_small)
+                return self._architectural_mesh(depth_retry, img_retry, w_small, h_small,
+                                               scale_factor_x, scale_factor_z)
             print("  ⚠️  Still no walls — falling back to depth heightmap")
             return self._depth_to_mesh(depth_map, image, width, height, image_path=None)
 
-        # Create floor plane (horizontal XZ plane at Y=0)
-        fx = scale_factor_x
-        fz = scale_factor_z
-        floor_vertices = [
-            [-fx, floor_height, -fz],
-            [ fx, floor_height, -fz],
-            [ fx, floor_height,  fz],
-            [-fx, floor_height,  fz]
-        ]
-        # Sample a warm beige/wood tone from the image interior (floor plan paper color)
-        interior_region = image_small[h_small // 4: 3 * h_small // 4,
-                                      w_small // 4: 3 * w_small // 4]
-        # Use the lightest pixels in the interior as the floor color (paper/room color)
-        bright_mask = np.all(interior_region > 180, axis=2)
-        if np.sum(bright_mask) > 100:
-            floor_color = np.mean(interior_region[bright_mask], axis=0).astype(int).tolist()
-            # Add slight warmth to distinguish floor from walls
-            floor_color = [min(255, floor_color[0] - 5), min(255, floor_color[1] - 8), max(0, floor_color[2] - 20)]
+        # Room-colored floors — one color per detected room
+        room_data = self._build_room_floors(
+            depth_map_small, h_small, w_small,
+            scale_x, scale_z, offset_x, offset_z, floor_height
+        )
+        if room_data is not None:
+            rv, rf, rc = room_data
+            rf_shifted = rf + vertex_offset
+            vertices.extend(rv.tolist())
+            faces.extend(rf_shifted.tolist())
+            colors.extend(rc.tolist())
+            vertex_offset += len(rv)
         else:
-            floor_color = [230, 215, 190]  # Warm beige fallback
+            # Fallback: single warm-beige floor plane
+            fx, fz = scale_factor_x, scale_factor_z
+            vertices.extend([[-fx, floor_height, -fz], [ fx, floor_height, -fz],
+                              [ fx, floor_height,  fz], [-fx, floor_height,  fz]])
+            colors.extend([[230, 215, 190]] * 4)
+            b = vertex_offset
+            faces.extend([[b, b+1, b+2], [b, b+2, b+3]])
+            vertex_offset += 4
 
-        vertices.extend(floor_vertices)
-        colors.extend([floor_color] * 4)
-
-        # Floor faces (2 triangles) - order matters for proper normal direction
-        base_idx = vertex_offset
-        faces.append([base_idx, base_idx + 1, base_idx + 2])
-        faces.append([base_idx, base_idx + 2, base_idx + 3])
-        vertex_offset += 4
-
-        # Create ceiling plane (horizontal XZ plane at Y=ceiling_height)
-        ceiling_vertices = [
-            [-fx, ceiling_height, -fz],
-            [ fx, ceiling_height, -fz],
-            [ fx, ceiling_height,  fz],
-            [-fx, ceiling_height,  fz]
-        ]
-        ceiling_color = [240, 240, 240]  # Very light gray ceiling
-
-        vertices.extend(ceiling_vertices)
-        colors.extend([ceiling_color] * 4)
-
-        # Ceiling faces (2 triangles) - reversed winding for downward-facing normals
-        base_idx = vertex_offset
-        faces.append([base_idx, base_idx + 2, base_idx + 1])
-        faces.append([base_idx, base_idx + 3, base_idx + 2])
+        # Ceiling plane
+        fx, fz = scale_factor_x, scale_factor_z
+        vertices.extend([[-fx, ceiling_height, -fz], [ fx, ceiling_height, -fz],
+                          [ fx, ceiling_height,  fz], [-fx, ceiling_height,  fz]])
+        colors.extend([[245, 245, 245]] * 4)
+        b = vertex_offset
+        # Reversed winding so ceiling normal faces downward (visible from below)
+        faces.extend([[b, b+2, b+1], [b, b+3, b+2]])
 
         vertices = np.array(vertices, dtype=np.float32)
         faces = np.array(faces, dtype=np.int32)
@@ -605,6 +601,118 @@ class MeshGenerator:
         )
 
         return mesh
+
+    def _detect_segment_openings(self, image, px1, py1, px2, py2, h, w):
+        """
+        Sample image brightness along a wall contour segment to find door/window
+        openings (bright white gaps in the dark wall lines).
+        Returns list of (t_start, t_end) positions, normalized to [0, 1].
+        """
+        dx = px2 - px1
+        dy = py2 - py1
+        seg_len = max(np.sqrt(dx * dx + dy * dy), 1.0)
+        n_samples = max(int(seg_len), 6)
+
+        samples = []
+        for i in range(n_samples):
+            t = i / max(n_samples - 1, 1)
+            ix = int(np.clip(px1 + t * dx, 0, w - 1))
+            iy = int(np.clip(py1 + t * dy, 0, h - 1))
+            samples.append((t, float(np.mean(image[iy, ix])) > 195))
+
+        gaps = []
+        in_gap = False
+        gap_start = 0.0
+        for t, is_bright in samples:
+            if is_bright and not in_gap:
+                in_gap = True
+                gap_start = t
+            elif not is_bright and in_gap:
+                in_gap = False
+                if t - gap_start > 0.07:
+                    gaps.append((gap_start, t))
+        if in_gap and 1.0 - gap_start > 0.07:
+            gaps.append((gap_start, 1.0))
+        return gaps
+
+    def _build_room_floors(self, depth_map, h, w,
+                            scale_x, scale_z, offset_x, offset_z, floor_height):
+        """
+        Flood-fill floor areas between walls to detect individual rooms, then build
+        a color-coded floor mesh — one distinct warm color per room.
+        Returns (vertices, faces, colors) arrays, or None if no rooms found.
+        """
+        wall_mask  = (depth_map > 0.5).astype(np.uint8) * 255
+        floor_mask = cv2.bitwise_not(wall_mask)
+
+        # Erode so narrow doorways don't merge adjacent rooms in the component pass
+        kernel = np.ones((5, 5), np.uint8)
+        floor_eroded = cv2.erode(floor_mask, kernel, iterations=2)
+
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+            floor_eroded, connectivity=4
+        )
+
+        total_area = h * w
+        # Architect-friendly palette: warm, distinct, low-saturation tones
+        PALETTE = [
+            [232, 218, 200],  # tan — unlabelled background floor
+            [248, 238, 220],  # cream — living / main room
+            [218, 232, 246],  # sky blue — bedroom
+            [228, 244, 222],  # sage — kitchen / dining
+            [246, 232, 220],  # peach — bedroom 2
+            [234, 220, 246],  # lavender — study / office
+            [220, 244, 238],  # mint — bathroom
+            [244, 240, 218],  # pale gold — utility / laundry
+        ]
+
+        # Sort rooms largest → smallest so the main room gets the "cream" color
+        room_list = sorted(
+            [(idx, stats[idx, cv2.CC_STAT_AREA])
+             for idx in range(1, num_labels)
+             if stats[idx, cv2.CC_STAT_AREA] >= total_area * 0.003],
+            key=lambda x: -x[1]
+        )
+        label_color = {lbl: PALETTE[min(rank + 1, len(PALETTE) - 1)]
+                       for rank, (lbl, _) in enumerate(room_list)}
+
+        if not room_list:
+            return None
+
+        print(f"  🏘️  Room detection: {len(room_list)} rooms found")
+
+        step = max(3, min(w, h) // 64)
+        verts, face_list, col_list = [], [], []
+        v_off = 0
+
+        for py in range(0, h - step, step):
+            for px in range(0, w - step, step):
+                cy, cx = py + step // 2, px + step // 2
+                if cy >= h or cx >= w:
+                    continue
+                if floor_mask[cy, cx] == 0:
+                    continue  # skip wall area
+                lbl = int(labels[cy, cx]) if cy < labels.shape[0] and cx < labels.shape[1] else 0
+                color = label_color.get(lbl, PALETTE[0])
+
+                x0 = px * scale_x + offset_x
+                x1 = min(px + step, w) * scale_x + offset_x
+                z0 = -(py * scale_z + offset_z)
+                z1 = -(min(py + step, h) * scale_z + offset_z)
+
+                verts.extend([[x0, floor_height, z0], [x1, floor_height, z0],
+                               [x1, floor_height, z1], [x0, floor_height, z1]])
+                col_list.extend([color] * 4)
+                b = v_off
+                face_list.extend([[b, b+1, b+2], [b, b+2, b+3]])
+                v_off += 4
+
+        if not verts:
+            return None
+
+        return (np.array(verts,      dtype=np.float32),
+                np.array(face_list,  dtype=np.int32),
+                np.array(col_list,   dtype=np.uint8))
 
     def create_textured_mesh(self, mesh, image_data):
         """
