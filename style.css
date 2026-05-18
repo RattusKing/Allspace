@@ -207,6 +207,18 @@ body {
     color: var(--text-muted);
 }
 
+.option-hint {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-weight: normal;
+}
+
+.option-note {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    margin-top: 0.4rem;
+}
+
 /* Progress Section */
 .progress-section {
     text-align: center;
@@ -259,14 +271,74 @@ body {
     width: 100%;
     height: 500px;
     background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    position: relative;
 }
 
 .viewer-controls {
-    padding: 1rem;
+    padding: 0.75rem 1rem;
     background: var(--surface-light);
     color: var(--text-muted);
     font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
 }
+
+.btn-walk {
+    background: var(--surface-color);
+    color: var(--text-color);
+    border: 2px solid var(--border-color);
+    padding: 0.4rem 1rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.btn-walk:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+.btn-walk.active {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: white;
+}
+
+.crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 20px;
+    height: 20px;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.crosshair::before,
+.crosshair::after {
+    content: '';
+    position: absolute;
+    background: rgba(255, 255, 255, 0.85);
+    border-radius: 1px;
+}
+
+.crosshair::before {
+    width: 2px;
+    height: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.crosshair::after {
+    width: 100%;
+    height: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
 
 .download-section {
     margin: 2rem 0;

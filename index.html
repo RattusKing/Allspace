@@ -77,6 +77,18 @@
                     <span id="wallThicknessValue">0.3</span>
                 </div>
 
+                <div class="option-group">
+                    <label>Floor Plan Scale <span class="option-hint">(for architectural drawings)</span>:</label>
+                    <select id="floorPlanScaleSelect" class="select-input">
+                        <option value="auto">Auto (normalized)</option>
+                        <option value="50">1:50 — very detailed / small area</option>
+                        <option value="100" selected>1:100 — typical residential</option>
+                        <option value="200">1:200 — larger buildings</option>
+                        <option value="500">1:500 — site plans</option>
+                    </select>
+                    <p class="option-note">Sets real-world meter scale on exported model. Assumes 96 DPI scan.</p>
+                </div>
+
                 <button class="btn btn-primary btn-large" id="generateBtn">
                     🚀 Generate 3D Environment
                 </button>
@@ -98,9 +110,12 @@
 
                 <!-- 3D Preview -->
                 <div class="viewer-container">
-                    <div id="viewer3d" class="viewer-3d"></div>
+                    <div id="viewer3d" class="viewer-3d">
+                        <div id="walkCrosshair" class="crosshair hidden"></div>
+                    </div>
                     <div class="viewer-controls">
-                        <p>🖱️ Left-click + drag: Rotate • Right-click + drag: Pan • Scroll: Zoom</p>
+                        <span id="viewerHint">🖱️ Left-click + drag: Rotate • Right-click + drag: Pan • Scroll: Zoom</span>
+                        <button class="btn btn-walk" id="walkToggleBtn" onclick="toggleWalkMode()">🚶 Walk Mode</button>
                     </div>
                 </div>
 
