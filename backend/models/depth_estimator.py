@@ -141,9 +141,17 @@ class DepthEstimator:
         # "Sky at top": top border is noticeably brighter than the middle AND
         # a large fraction of the top strip is near-white (open sky / paper sky).
         top_bright_fraction = float(np.sum(top_strip > 200)) / top_strip.size
+        bottom_bright_fraction = float(np.sum(bottom_strip > 200)) / bottom_strip.size
+
+        # Key distinction: real sky is only bright at the TOP (not bottom).
+        # Floor plan white paper is bright THROUGHOUT (top AND bottom ≈ equal).
+        # If bottom is also very white, it's a paper background — not sky.
+        white_throughout = (top_bright_fraction > 0.40 and bottom_bright_fraction > 0.35)
+
         sky_at_top = (top_brightness > 180
                       and top_bright_fraction > 0.35
-                      and top_brightness > mid_brightness + 15)
+                      and top_brightness > mid_brightness + 15
+                      and not white_throughout)
 
         # ── Structural line analysis (shared by floor-plan and facade) ───────
         edges = cv2.Canny(img_gray, 50, 150)
@@ -169,15 +177,23 @@ class DepthEstimator:
         # Elevation drawings with coloured walls are also caught here.
         hsv_full = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
         mid_saturation = float(np.mean(hsv_full[height // 5: 4 * height // 5, :, 1]))
+        # Low saturation across the full image strongly suggests a monochrome drawing
+        # (floor plan, section, elevation on paper) rather than a real photo facade.
+        full_saturation = float(np.mean(hsv_full[:, :, 1]))
         del hsv_full
 
         # A facade also shows sky-to-ground brightness contrast
         sky_ground_contrast = abs(top_brightness - bottom_brightness)
 
+        # A floor plan on white paper has very low colour saturation
+        # (black lines on white background). Real building photos have more colour.
+        is_low_saturation_drawing = full_saturation < 20
+
         is_building_facade = (
             sky_at_top
             and has_many_straight_lines
             and (mid_saturation > 15 or sky_ground_contrast > 25)
+            and not is_low_saturation_drawing  # exclude monochrome architectural drawings
         )
 
         if is_building_facade:
@@ -197,10 +213,10 @@ class DepthEstimator:
         dark_ratio  = dark_pixels  / total_pixels
         light_ratio = light_pixels / total_pixels
 
-        is_mostly_white           = avg_brightness > 180
-        is_high_contrast          = std_brightness > 40
-        has_significant_dark_lines  = 0.03 < dark_ratio < 0.4
-        has_significant_white_space = light_ratio > 0.4
+        is_mostly_white           = avg_brightness > 170
+        is_high_contrast          = std_brightness > 35
+        has_significant_dark_lines  = 0.02 < dark_ratio < 0.5
+        has_significant_white_space = light_ratio > 0.35
 
         conditions_met = sum([
             is_mostly_white and has_significant_white_space,
@@ -210,13 +226,19 @@ class DepthEstimator:
         ])
         strong_floor_plan = is_mostly_white and has_significant_white_space and is_high_contrast
 
-        # Only classify as floor_plan when sky-at-top is NOT present
-        # (floor plans are top-down drawings with no sky)
-        if not sky_at_top and (conditions_met >= 2 or strong_floor_plan):
+        # A monochrome drawing (low saturation) with uniform white background is
+        # almost certainly a floor plan, even if it accidentally triggers sky_at_top.
+        is_architectural_drawing = is_low_saturation_drawing and white_throughout and has_many_straight_lines
+
+        # Classify as floor_plan when:
+        #  (a) sky-at-top NOT triggered (no sky = not a facade photo), OR
+        #  (b) image is a low-saturation architectural drawing (safe override)
+        if (not sky_at_top or is_architectural_drawing) and (conditions_met >= 2 or strong_floor_plan):
             del edges
             print(f"  📐 Floor plan detected! conditions={conditions_met}/4 "
                   f"(white={is_mostly_white}, contrast={is_high_contrast}, "
-                  f"dark_lines={has_significant_dark_lines}, straight={has_many_straight_lines})")
+                  f"dark_lines={has_significant_dark_lines}, straight={has_many_straight_lines}, "
+                  f"drawing={is_architectural_drawing})")
             return "floor_plan"
 
         # ── Other scene types ──────────────────────────────────────────────

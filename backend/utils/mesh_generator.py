@@ -419,7 +419,7 @@ class MeshGenerator:
         # Floor plan in XZ plane (horizontal), walls extrude in +Y (upward)
         ceiling_height = 2.5  # Units in 3D space (represents 8-10 feet)
         floor_height = 0.0
-        wall_thickness = 0.05  # Slight wall thickness for realism
+        wall_thickness = 0.08  # Visible wall depth for realism
         print(f"  📐 Using Y-up orientation: Floor=XZ plane (Y={floor_height}), Walls=+Y direction (ceiling Y={ceiling_height})")
         print(f"  🏗️  Architectural detail: Wall thickness={wall_thickness}, preserving floor plan geometry")
 
@@ -432,6 +432,7 @@ class MeshGenerator:
         vertices = []
         faces = []
         colors = []
+        wall_vertex_count = 0  # track separately so fallback check is before floor/ceiling
 
         # Process each contour (outer walls and inner walls)
         vertex_offset = 0
@@ -465,35 +466,75 @@ class MeshGenerator:
                 # Fallback to neutral gray
                 wall_color = [120, 120, 120]
 
-            # Create vertical wall faces along contour
-            for i in range(len(approx)):
+            # Compute a normal offset direction for wall thickness
+            # Normal = perpendicular to contour direction, scaled to wall_thickness
+            seg_count = len(approx)
+            for i in range(seg_count):
                 p1 = approx[i][0]
-                p2 = approx[(i + 1) % len(approx)][0]
+                p2 = approx[(i + 1) % seg_count][0]
 
-                # Convert pixel coordinates to normalized 3D coordinates
-                # Floor plan is in XZ plane (horizontal), walls extrude in +Y (up)
                 x1 = p1[0] * scale_x + offset_x
-                z1 = -(p1[1] * scale_z + offset_z)  # Image Y → 3D Z (depth), flipped
+                z1 = -(p1[1] * scale_z + offset_z)
                 x2 = p2[0] * scale_x + offset_x
-                z2 = -(p2[1] * scale_z + offset_z)  # Image Y → 3D Z (depth), flipped
+                z2 = -(p2[1] * scale_z + offset_z)
 
-                # Create 4 vertices for this wall segment (rectangular face)
-                # Bottom edge (floor level, Y=0)
-                v0 = [x1, floor_height, z1]  # X, Y, Z
-                v1 = [x2, floor_height, z2]
-                # Top edge (ceiling level, Y=2.5)
+                # Compute wall normal (perpendicular to segment, in XZ plane)
+                seg_dx = x2 - x1
+                seg_dz = z2 - z1
+                seg_len = max(np.sqrt(seg_dx**2 + seg_dz**2), 1e-6)
+                nx = -seg_dz / seg_len * wall_thickness
+                nz =  seg_dx / seg_len * wall_thickness
+
+                # Outer face (visible from outside the wall)
+                v0 = [x1, floor_height,   z1]
+                v1 = [x2, floor_height,   z2]
                 v2 = [x2, ceiling_height, z2]
                 v3 = [x1, ceiling_height, z1]
-
                 vertices.extend([v0, v1, v2, v3])
                 colors.extend([wall_color] * 4)
-
-                # Create 2 triangles for this rectangular wall face
                 base_idx = vertex_offset
                 faces.append([base_idx, base_idx + 1, base_idx + 2])
                 faces.append([base_idx, base_idx + 2, base_idx + 3])
-
                 vertex_offset += 4
+
+                # Inner face (visible from inside the room) — offset by wall normal
+                inner_color = [min(255, int(c) + 15) for c in wall_color]  # slightly lighter
+                v4 = [x1 + nx, floor_height,   z1 + nz]
+                v5 = [x2 + nx, floor_height,   z2 + nz]
+                v6 = [x2 + nx, ceiling_height, z2 + nz]
+                v7 = [x1 + nx, ceiling_height, z1 + nz]
+                vertices.extend([v4, v5, v6, v7])
+                colors.extend([inner_color] * 4)
+                base_idx = vertex_offset
+                # Reversed winding so inner face normal points inward
+                faces.append([base_idx + 2, base_idx + 1, base_idx])
+                faces.append([base_idx + 3, base_idx + 2, base_idx])
+                vertex_offset += 4
+
+                # Top cap (wall top face between outer and inner)
+                top_color = [min(255, int(c) + 30) for c in wall_color]
+                vertices.extend([v3, v2, v6, v7])
+                colors.extend([top_color] * 4)
+                base_idx = vertex_offset
+                faces.append([base_idx, base_idx + 1, base_idx + 2])
+                faces.append([base_idx, base_idx + 2, base_idx + 3])
+                vertex_offset += 4
+
+        wall_vertex_count = vertex_offset  # all verts so far are wall geometry
+
+        # Fallback: no usable wall geometry extracted from this depth map
+        if wall_vertex_count == 0:
+            print("  ⚠️  No wall geometry from contours — retrying with lower threshold")
+            wall_mask_retry = (depth_map_small > 0.3).astype(np.uint8) * 255
+            contours_retry, _ = cv2.findContours(
+                wall_mask_retry, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE
+            )
+            if contours_retry:
+                depth_retry = wall_mask_retry.astype(np.float32) / 255.0
+                img_retry = image_small if max_dimension > 800 else image
+                return self._architectural_mesh(depth_retry, img_retry, w_small, h_small)
+            print("  ⚠️  Still no walls — falling back to depth heightmap")
+            return self._depth_to_mesh(depth_map, image, width, height, image_path=None)
 
         # Create floor plane (horizontal XZ plane at Y=0)
         floor_vertices = [
@@ -502,7 +543,17 @@ class MeshGenerator:
             [1.0, floor_height, 1.0],
             [-1.0, floor_height, 1.0]
         ]
-        floor_color = [220, 220, 220]  # Light gray floor
+        # Sample a warm beige/wood tone from the image interior (floor plan paper color)
+        interior_region = image_small[h_small // 4: 3 * h_small // 4,
+                                      w_small // 4: 3 * w_small // 4]
+        # Use the lightest pixels in the interior as the floor color (paper/room color)
+        bright_mask = np.all(interior_region > 180, axis=2)
+        if np.sum(bright_mask) > 100:
+            floor_color = np.mean(interior_region[bright_mask], axis=0).astype(int).tolist()
+            # Add slight warmth to distinguish floor from walls
+            floor_color = [min(255, floor_color[0] - 5), min(255, floor_color[1] - 8), max(0, floor_color[2] - 20)]
+        else:
+            floor_color = [230, 215, 190]  # Warm beige fallback
 
         vertices.extend(floor_vertices)
         colors.extend([floor_color] * 4)
@@ -531,11 +582,6 @@ class MeshGenerator:
         faces.append([base_idx, base_idx + 2, base_idx + 1])
         faces.append([base_idx, base_idx + 3, base_idx + 2])
 
-        if len(vertices) == 0:
-            print("  ⚠️  No wall geometry generated, creating simple box")
-            # Fallback: create a simple box
-            return self._create_fallback_box()
-
         vertices = np.array(vertices, dtype=np.float32)
         faces = np.array(faces, dtype=np.int32)
         colors = np.array(colors, dtype=np.uint8)
@@ -551,11 +597,6 @@ class MeshGenerator:
         )
 
         return mesh
-
-    def _create_fallback_box(self):
-        """Create a simple box as fallback"""
-        box = trimesh.creation.box(extents=[2.0, 2.0, 0.5])
-        return box
 
     def create_textured_mesh(self, mesh, image_data):
         """
