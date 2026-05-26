@@ -10,8 +10,13 @@ bind = f"0.0.0.0:{os.getenv('PORT', '5000')}"
 backlog = 2048
 
 # Worker processes
-workers = multiprocessing.cpu_count() * 2 + 1
+# Single worker avoids the split-brain problem where upload and generate
+# requests land on different processes that each have their own in-memory
+# generation_jobs dict. Flask spawns background threads per generation
+# request, so one worker handles concurrency without blocking.
+workers = 1
 worker_class = "sync"
+threads = 4          # thread pool inside the single worker for concurrent requests
 worker_connections = 1000
 timeout = 300  # Longer timeout for AI model inference
 keepalive = 2

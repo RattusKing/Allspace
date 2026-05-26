@@ -222,10 +222,10 @@ def generate_3d():
                 # floor_plan_scale is the drawing ratio (e.g. '100' for 1:100).
                 # We assume 96 DPI scan and convert pixels → real metres so the
                 # exported GLB imports at correct scale in Revit / SketchUp.
-                import cv2 as _cv2
-                _img_shape = _cv2.imread(image_path).shape  # (h, w, c)
-                img_px_w, img_px_h = _img_shape[1], _img_shape[0]
-                del _img_shape, _cv2
+                from PIL import Image as _PIL_Image
+                with _PIL_Image.open(image_path) as _pil_im:
+                    img_px_w, img_px_h = _pil_im.size
+                del _PIL_Image
 
                 scale_str = options.get('floor_plan_scale', 'auto')
                 if scale_str != 'auto' and scene_type == 'floor_plan':
