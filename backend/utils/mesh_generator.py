@@ -488,17 +488,6 @@ class MeshGenerator:
             if perimeter < min_contour_perimeter:
                 continue
 
-            # Skip near-square blobs (aspect ratio < 2.5) — these are typically
-            # text remnants or annotation dots, not wall segments.
-            x, y, cw, ch = cv2.boundingRect(contour)
-            if cw > 0 and ch > 0:
-                aspect = max(cw, ch) / min(cw, ch)
-                area = cv2.contourArea(contour)
-                # Only apply aspect filter to small blobs; large complex shapes
-                # (room perimeters) can be compact but are still walls.
-                if aspect < 2.5 and area < w_small * h_small * 0.01:
-                    continue
-
             epsilon = 0.002 * perimeter
             approx = cv2.approxPolyDP(contour, epsilon, True)
 

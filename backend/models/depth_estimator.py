@@ -278,62 +278,55 @@ class DepthEstimator:
           White paper            → 220 – 255  (excluded by threshold)
 
         Pipeline:
-          1. Threshold at 100 → captures walls + text, excludes cyan/light elements
-          2. Directional erosion → destroys thin dimension lines (thin in ≥1 axis)
-          3. Morphological close  → fills double-line wall bodies
-          4. Connected-component area filter → removes remaining text blobs
+          1. Threshold at 100  → captures walls + text, excludes cyan/light ink
+          2. Two-stage close   → first fills line-width gaps, then fills the
+                                 white body between parallel wall face lines
+          3. Open (erode+dilate) pass to destroy tiny isolated blobs (text) that
+             didn't grow large enough during closing
+          4. Connected-component area filter as final guard
         """
         min_dim = min(height, width)
 
-        # ── Step 1: Find genuinely dark pixels ───────────────────────────────
-        # Threshold 100: dark navy/black walls pass; cyan annotations (~150-180
-        # in grayscale) and white paper (~240+) are excluded.
+        # ── Step 1: Find dark structural pixels ──────────────────────────────
         _, dark = cv2.threshold(img_gray, 100, 255, cv2.THRESH_BINARY_INV)
-
-        # Remove single-pixel speckles (scan noise)
+        # Remove single-pixel speckles
         dark = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
 
-        # ── Step 2: Thin-line suppression via directional erosion ─────────────
-        # Architectural wall lines have significant thickness in BOTH X and Y.
-        # Dimension/annotation lines are thin in at least one axis.
-        # A pixel survives only if it passes horizontal AND vertical erosion,
-        # meaning it has dark neighbours in both directions — thin lines fail.
-        thin_k = max(3, min_dim // 70)          # ~5 px at 350 px, ~9 px at 640 px
-        h_survived = cv2.erode(dark, np.ones((1, thin_k), np.uint8))
-        v_survived = cv2.erode(dark, np.ones((thin_k, 1), np.uint8))
-        thick_core = cv2.bitwise_and(h_survived, v_survived)
-        del h_survived, v_survived
-
-        # Expand the thick core back to recover the full wall pixel extent
-        thick_core = cv2.dilate(
-            thick_core, np.ones((thin_k + 2, thin_k + 2), np.uint8)
+        # ── Step 2: Two-stage morphological close ─────────────────────────────
+        # Stage A – small close: fuse broken stroke pixels within a single line
+        ck1 = max(3, min_dim // 80)          # ~4 px at 350 px
+        stage_a = cv2.morphologyEx(
+            dark, cv2.MORPH_CLOSE, np.ones((ck1, ck1), np.uint8)
         )
 
-        # Keep only original dark pixels that are adjacent to a thick wall core
-        filtered = cv2.bitwise_and(dark, thick_core)
-        del dark, thick_core
-
-        # ── Step 3: Close to fill wall body ──────────────────────────────────
-        # Floor plans often draw walls as two parallel lines (inner + outer face)
-        # with a white gap between them.  Closing bridges this gap so each wall
-        # becomes one solid region for contour detection.
-        close_k = max(5, min_dim // 50)         # ~7 px at 350 px, ~12 px at 640 px
-        closed = cv2.morphologyEx(
-            filtered, cv2.MORPH_CLOSE,
-            np.ones((close_k, close_k), np.uint8),
-            iterations=2,
+        # Stage B – larger close: bridge the white gap between the two parallel
+        # lines that represent a wall's inner and outer face in CAD drawings.
+        # Walls at typical 1:100 scan resolutions leave a 4-12 px gap.
+        ck2 = max(7, min_dim // 35)          # ~10 px at 350 px, ~18 px at 640 px
+        stage_b = cv2.morphologyEx(
+            stage_a, cv2.MORPH_CLOSE,
+            np.ones((ck2, ck2), np.uint8), iterations=2
         )
-        del filtered
+        del dark, stage_a
+
+        # ── Step 3: Open pass to destroy under-sized text blobs ──────────────
+        # Text characters (≤10 px tall at these resolutions) survive the closing
+        # as compact blobs. An erosion that destroys anything thinner than
+        # half the closing kernel eliminates most text while preserving walls
+        # whose bodies are now > ck2 pixels wide after Stage B.
+        open_k = max(3, ck2 // 2)
+        opened = cv2.morphologyEx(
+            stage_b, cv2.MORPH_OPEN, np.ones((open_k, open_k), np.uint8)
+        )
+        del stage_b
 
         # ── Step 4: Connected-component area filter ───────────────────────────
-        # Large continuous blobs = wall segments.
-        # Small isolated blobs = leftover text characters or annotation marks.
-        n, labels, stats, _ = cv2.connectedComponentsWithStats(closed, connectivity=8)
-        del closed
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(opened, connectivity=8)
+        del opened
 
         wall_mask = np.zeros((height, width), dtype=np.uint8)
-        min_area = max(120, int(width * height * 0.0015))  # ~0.15 % of image
-        max_area = int(width * height * 0.40)              # cap: avoid filling the image
+        min_area = max(150, int(width * height * 0.002))   # ~0.2 % of image
+        max_area = int(width * height * 0.40)
         kept = 0
         for i in range(1, n):
             a = int(stats[i, cv2.CC_STAT_AREA])
@@ -342,15 +335,12 @@ class DepthEstimator:
                 kept += 1
         del labels, stats
 
-        # Light dilation so thin surviving wall lines have body for mesh extrusion
-        wall_mask = cv2.dilate(wall_mask, np.ones((3, 3), np.uint8), iterations=1)
-
         depth = np.zeros((height, width), dtype=np.float32)
         depth[wall_mask > 0] = 1.0
         del wall_mask
 
         wall_pct = float(np.mean(depth > 0)) * 100
-        print(f"  🏗️  Floor plan wall mask: {n - 1} dark components → "
+        print(f"  🏗️  Floor plan: {n - 1} dark components → "
               f"{kept} wall blobs, {wall_pct:.1f}% wall coverage")
 
         return depth
