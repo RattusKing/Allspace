@@ -770,9 +770,9 @@
           setTimeout(() => {
             document.getElementById('processingSection').style.display = 'none';
             document.getElementById('resultSection').style.display = 'block';
-            initViewer(data);
             document.getElementById('downloadGLB').onclick = () => window.location.href = data.glb_url;
             document.getElementById('downloadFBX').onclick = () => window.location.href = data.fbx_url;
+            requestAnimationFrame(() => initViewer(data));
           }, 400);
         })
         .catch(err => {
@@ -786,15 +786,15 @@
 
     function initViewer(data) {
       const canvas = document.getElementById('threeCanvas');
+      const canvasW = canvas.offsetWidth || 800;
+      const canvasH = canvas.offsetHeight || 380;
       const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
       renderer.setPixelRatio(window.devicePixelRatio);
-      renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+      renderer.setSize(canvasW, canvasH);
       renderer.setClearColor(0x1a1917);
 
       const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(50, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
-      camera.position.set(0, 8, 12);
-      camera.lookAt(0, 0, 0);
+      const camera = new THREE.PerspectiveCamera(50, canvasW / canvasH, 0.1, 1000);
 
       scene.add(new THREE.AmbientLight(0xffffff, 0.7));
       const dirLight = new THREE.DirectionalLight(0xfff3e0, 0.9);
@@ -802,9 +802,22 @@
       scene.add(dirLight);
 
       if (data && data.model_url) {
-        const loader = new THREE.GLTFLoader ? new THREE.GLTFLoader() : null;
+        const loader = typeof THREE.GLTFLoader !== 'undefined' ? new THREE.GLTFLoader() : null;
         if (loader) {
-          loader.load(data.model_url, (gltf) => { scene.add(gltf.scene); });
+          loader.load(data.model_url, (gltf) => {
+            scene.add(gltf.scene);
+            const box = new THREE.Box3().setFromObject(gltf.scene);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            radius = Math.max(size.x, size.y, size.z) * 2.5;
+            panX = center.x;
+            panY = center.y;
+            updateCamera();
+          }, undefined, (err) => {
+            console.error('GLTFLoader failed:', err);
+          });
+        } else {
+          console.error('THREE.GLTFLoader not available');
         }
       } else {
         const geo = new THREE.BoxGeometry(4, 0.1, 4);
