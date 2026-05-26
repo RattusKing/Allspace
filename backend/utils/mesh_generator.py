@@ -577,15 +577,6 @@ class MeshGenerator:
             faces.extend([[b, b+1, b+2], [b, b+2, b+3]])
             vertex_offset += 4
 
-        # Ceiling plane
-        fx, fz = scale_factor_x, scale_factor_z
-        vertices.extend([[-fx, ceiling_height, -fz], [ fx, ceiling_height, -fz],
-                          [ fx, ceiling_height,  fz], [-fx, ceiling_height,  fz]])
-        colors.extend([[245, 245, 245]] * 4)
-        b = vertex_offset
-        # Reversed winding so ceiling normal faces downward (visible from below)
-        faces.extend([[b, b+2, b+1], [b, b+3, b+2]])
-
         vertices = np.array(vertices, dtype=np.float32)
         faces = np.array(faces, dtype=np.int32)
         colors = np.array(colors, dtype=np.uint8)

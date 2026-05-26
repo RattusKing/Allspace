@@ -192,7 +192,6 @@ def generate_3d():
 
         # Get optional parameters
         options = {
-            'hallucinate_unseen': data.get('hallucinate_unseen', True),
             'room_complexity': data.get('room_complexity', 'medium'),  # low, medium, high
             'wall_thickness': data.get('wall_thickness', 0.3),
             'generate_interiors': data.get('generate_interiors', True),
@@ -248,24 +247,7 @@ def generate_3d():
                     scale_factor_x=scale_factor_x, scale_factor_z=scale_factor_z
                 )
 
-                # Step 3: Procedurally generate unseen areas
-                # Building facades are already a complete 3D box model – running
-                # the procedural generator wraps them in generic gray slabs, which
-                # buries all architectural detail and makes the result look like a
-                # plain cube. Skip it entirely for facade scenes.
-                if options['hallucinate_unseen'] and scene_type != 'building_facade':
-                    job['progress'] = 60
-                    job['current_step'] = 'Hallucinating unseen areas'
-                    enhanced_mesh = procedural_generator.generate_unseen_geometry(
-                        base_mesh,
-                        image_data,
-                        depth_map,
-                        options
-                    )
-                else:
-                    if scene_type == 'building_facade':
-                        print("  🏠 Skipping procedural generation for building facade")
-                    enhanced_mesh = base_mesh
+                enhanced_mesh = base_mesh
 
                 # Step 4: Export to different formats
                 job['progress'] = 80
