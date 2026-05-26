@@ -758,7 +758,7 @@
         }
       }, 800);
 
-      fetch('/generate', { method: 'POST', body: formData })
+      fetch('https://allspace.onrender.com/generate', { method: 'POST', body: formData })
         .then(res => {
           if (!res.ok) throw new Error('Server error: ' + res.status);
           return res.json();
