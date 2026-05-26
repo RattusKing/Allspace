@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Cormorant+Garamond:wght@400;600&display=swap" rel="stylesheet" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -728,6 +729,10 @@
   </div>
 
   <script>
+    const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+      ? ''
+      : 'https://allspace.onrender.com';
+
     const fileInput = document.getElementById('fileInput');
     const uploadZone = document.getElementById('uploadZone');
     const uploadDefault = document.getElementById('uploadDefault');
@@ -808,7 +813,7 @@
         }
       }, 800);
 
-      fetch('/generate', { method: 'POST', body: formData })
+      fetch(API_BASE + '/generate', { method: 'POST', body: formData })
         .then(res => {
           if (!res.ok) throw new Error('Server error: ' + res.status);
           return res.json();
