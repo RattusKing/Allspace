@@ -679,10 +679,6 @@
   </div>
 
   <script>
-    const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-      ? ''
-      : 'https://allspace.onrender.com';
-
     const fileInput = document.getElementById('fileInput');
     const uploadZone = document.getElementById('uploadZone');
     const uploadDefault = document.getElementById('uploadDefault');
@@ -763,7 +759,7 @@
         }
       }, 800);
 
-      fetch(API_BASE + '/generate', { method: 'POST', body: formData })
+      fetch('/generate', { method: 'POST', body: formData })
         .then(res => {
           if (!res.ok) throw new Error('Server error: ' + res.status);
           return res.json();
