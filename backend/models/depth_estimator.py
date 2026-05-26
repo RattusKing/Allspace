@@ -270,63 +270,88 @@ class DepthEstimator:
 
     def _floorplan_depth(self, img_gray, height, width):
         """
-        Depth estimation for architectural floor plans
-        WALLS (thick dark lines) = HIGH depth (extrude up to ceiling)
-        FLOORS (white spaces) = LOW depth (ground level)
+        Phase 1: Clean binary wall mask for architectural floor plan drawings.
 
-        Key challenge: Filter out text/labels and keep only wall structure
+        Grayscale value ranges for typical CAD floor plans:
+          Dark navy/black walls  →   0 – 80   (kept)
+          Cyan/blue annotations  → 140 – 200  (excluded by threshold)
+          White paper            → 220 – 255  (excluded by threshold)
+
+        Pipeline:
+          1. Threshold at 100 → captures walls + text, excludes cyan/light elements
+          2. Directional erosion → destroys thin dimension lines (thin in ≥1 axis)
+          3. Morphological close  → fills double-line wall bodies
+          4. Connected-component area filter → removes remaining text blobs
         """
-        # Step 1: Create binary mask of dark elements (walls + text)
-        # Most walls are gray (100-180), not pure black
-        binary = cv2.threshold(img_gray, 180, 255, cv2.THRESH_BINARY)[1]
-        binary_inv = 255 - binary  # Dark elements are now white
+        min_dim = min(height, width)
 
-        # Step 2: Remove text and small elements using morphological operations
-        # Text = small, disconnected. Walls = thick, continuous.
+        # ── Step 1: Find genuinely dark pixels ───────────────────────────────
+        # Threshold 100: dark navy/black walls pass; cyan annotations (~150-180
+        # in grayscale) and white paper (~240+) are excluded.
+        _, dark = cv2.threshold(img_gray, 100, 255, cv2.THRESH_BINARY_INV)
 
-        # First, remove very small specs (noise)
-        kernel_small = np.ones((2, 2), np.uint8)
-        cleaned = cv2.morphologyEx(binary_inv, cv2.MORPH_OPEN, kernel_small)
+        # Remove single-pixel speckles (scan noise)
+        dark = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
 
-        # Close gaps in walls (connect nearby wall segments)
-        kernel_close = np.ones((3, 3), np.uint8)
-        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel_close)
+        # ── Step 2: Thin-line suppression via directional erosion ─────────────
+        # Architectural wall lines have significant thickness in BOTH X and Y.
+        # Dimension/annotation lines are thin in at least one axis.
+        # A pixel survives only if it passes horizontal AND vertical erosion,
+        # meaning it has dark neighbours in both directions — thin lines fail.
+        thin_k = max(3, min_dim // 70)          # ~5 px at 350 px, ~9 px at 640 px
+        h_survived = cv2.erode(dark, np.ones((1, thin_k), np.uint8))
+        v_survived = cv2.erode(dark, np.ones((thin_k, 1), np.uint8))
+        thick_core = cv2.bitwise_and(h_survived, v_survived)
+        del h_survived, v_survived
 
-        # Dilate to make walls thicker, then erode to remove thin text
-        # This keeps thick continuous lines (walls) and removes thin lines (text)
-        kernel_wall = np.ones((4, 4), np.uint8)
-        dilated = cv2.dilate(cleaned, kernel_wall, iterations=2)
-        eroded = cv2.erode(dilated, kernel_wall, iterations=2)
+        # Expand the thick core back to recover the full wall pixel extent
+        thick_core = cv2.dilate(
+            thick_core, np.ones((thin_k + 2, thin_k + 2), np.uint8)
+        )
 
-        # Step 3: Find connected components and filter by size
-        # Walls are large connected regions, text is small
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(eroded, connectivity=8)
+        # Keep only original dark pixels that are adjacent to a thick wall core
+        filtered = cv2.bitwise_and(dark, thick_core)
+        del dark, thick_core
 
-        # Create mask of only large components (walls, not text)
-        wall_mask = np.zeros_like(img_gray, dtype=np.uint8)
-        min_wall_area = (width * height) * 0.001  # Walls should be at least 0.1% of image
+        # ── Step 3: Close to fill wall body ──────────────────────────────────
+        # Floor plans often draw walls as two parallel lines (inner + outer face)
+        # with a white gap between them.  Closing bridges this gap so each wall
+        # becomes one solid region for contour detection.
+        close_k = max(5, min_dim // 50)         # ~7 px at 350 px, ~12 px at 640 px
+        closed = cv2.morphologyEx(
+            filtered, cv2.MORPH_CLOSE,
+            np.ones((close_k, close_k), np.uint8),
+            iterations=2,
+        )
+        del filtered
 
-        for i in range(1, num_labels):  # Skip background (0)
-            area = stats[i, cv2.CC_STAT_AREA]
-            if area > min_wall_area:
+        # ── Step 4: Connected-component area filter ───────────────────────────
+        # Large continuous blobs = wall segments.
+        # Small isolated blobs = leftover text characters or annotation marks.
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(closed, connectivity=8)
+        del closed
+
+        wall_mask = np.zeros((height, width), dtype=np.uint8)
+        min_area = max(120, int(width * height * 0.0015))  # ~0.15 % of image
+        max_area = int(width * height * 0.40)              # cap: avoid filling the image
+        kept = 0
+        for i in range(1, n):
+            a = int(stats[i, cv2.CC_STAT_AREA])
+            if min_area <= a <= max_area:
                 wall_mask[labels == i] = 255
+                kept += 1
+        del labels, stats
 
-        # Step 4: Create depth map
-        # Walls (white in wall_mask) = 1.0 (ceiling height)
-        # Floors (black in wall_mask) = 0.0 (ground level)
+        # Light dilation so thin surviving wall lines have body for mesh extrusion
+        wall_mask = cv2.dilate(wall_mask, np.ones((3, 3), np.uint8), iterations=1)
+
         depth = np.zeros((height, width), dtype=np.float32)
-        depth[wall_mask > 0] = 1.0  # Walls at ceiling height
-        depth[wall_mask == 0] = 0.0  # Floors at ground level
+        depth[wall_mask > 0] = 1.0
+        del wall_mask
 
-        # Step 5: Slight smoothing to remove hard edges (but keep walls distinct)
-        depth = cv2.GaussianBlur(depth, (3, 3), 0)
-
-        print(f"  🏗️  Floor plan processing:")
-        print(f"      Detected {num_labels-1} components, {np.sum(stats[1:, cv2.CC_STAT_AREA] > min_wall_area)} are walls")
-        print(f"      Wall pixels: {np.sum(wall_mask > 0)} ({100 * np.sum(wall_mask > 0) / wall_mask.size:.1f}%)")
-
-        # Clean up
-        del binary, binary_inv, cleaned, dilated, eroded, wall_mask, labels, stats, centroids
+        wall_pct = float(np.mean(depth > 0)) * 100
+        print(f"  🏗️  Floor plan wall mask: {n - 1} dark components → "
+              f"{kept} wall blobs, {wall_pct:.1f}% wall coverage")
 
         return depth
 
