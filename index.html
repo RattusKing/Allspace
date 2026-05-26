@@ -1,203 +1,875 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Image to 3D Environment Generator</title>
-    <meta name="description" content="Free, open-source tool to convert 2D images into explorable 3D environments">
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Convert architectural floor plans and building concepts into explorable 3D models. Free, open-source tool for architects and floor plan designers." />
+  <title>Allspace — Floor Plan to 3D Model Converter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Cormorant+Garamond:wght@400;600&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --accent: #B07D3A;
+      --accent-light: rgba(176, 125, 58, 0.10);
+      --bg: #FAFAF8;
+      --bg2: #F2F0EB;
+      --border: rgba(0,0,0,0.10);
+      --border2: rgba(0,0,0,0.18);
+      --text: #1C1B19;
+      --text2: #6B6860;
+      --text3: #9E9C97;
+      --radius: 10px;
+      --radius-sm: 5px;
+      --mono: 'DM Mono', monospace;
+      --serif: 'Cormorant Garamond', serif;
+      --sans: system-ui, -apple-system, sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #181715;
+        --bg2: #222019;
+        --border: rgba(255,255,255,0.10);
+        --border2: rgba(255,255,255,0.18);
+        --text: #F0EDE7;
+        --text2: #9E9C97;
+        --text3: #6B6860;
+      }
+    }
+
+    html, body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    a { color: var(--text2); text-decoration: none; }
+    a:hover { color: var(--text); }
+
+    .page { max-width: 900px; margin: 0 auto; padding: 0 2rem 4rem; }
+
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.5rem 0 1.25rem;
+      border-bottom: 0.5px solid var(--border);
+      margin-bottom: 2.5rem;
+    }
+    .logo {
+      font-family: var(--serif);
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      color: var(--text);
+    }
+    .logo span { color: var(--accent); }
+    .nav-links {
+      display: flex;
+      gap: 1.5rem;
+      font-size: 13px;
+      color: var(--text2);
+    }
+
+    .hero { margin-bottom: 2.5rem; }
+    .eyebrow {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+    }
+    h1 {
+      font-family: var(--serif);
+      font-size: 42px;
+      font-weight: 600;
+      line-height: 1.15;
+      color: var(--text);
+      margin-bottom: 0.85rem;
+    }
+    .hero-sub {
+      font-size: 15px;
+      color: var(--text2);
+      line-height: 1.65;
+      max-width: 520px;
+    }
+    .badges {
+      display: flex;
+      gap: 8px;
+      margin-top: 1.1rem;
+      flex-wrap: wrap;
+    }
+    .badge {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      border: 0.5px solid var(--border2);
+      border-radius: 3px;
+      padding: 3px 9px;
+      color: var(--text3);
+    }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 280px;
+      gap: 1.5rem;
+      align-items: start;
+    }
+    @media (max-width: 640px) {
+      .main-grid { grid-template-columns: 1fr; }
+      h1 { font-size: 32px; }
+    }
+
+    .upload-zone {
+      border: 0.5px solid var(--border2);
+      border-radius: var(--radius);
+      padding: 3rem 2rem;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+      background: var(--bg);
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      min-height: 240px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.85rem;
+    }
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-light);
+    }
+    .grid-bg {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 28px 28px;
+      pointer-events: none;
+    }
+    .upload-icon-wrap {
+      width: 48px;
+      height: 48px;
+      border: 0.5px solid var(--border2);
+      border-radius: var(--radius-sm);
+      background: var(--bg2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      z-index: 1;
+    }
+    .upload-icon-wrap svg { width: 22px; height: 22px; stroke: var(--accent); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+    .upload-label { font-size: 15px; font-weight: 500; color: var(--text); position: relative; z-index: 1; }
+    .upload-sub { font-size: 12px; color: var(--text2); position: relative; z-index: 1; }
+    .browse-btn {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: transparent;
+      border: 0.5px solid var(--accent);
+      color: var(--accent);
+      border-radius: var(--radius-sm);
+      padding: 7px 18px;
+      cursor: pointer;
+      position: relative;
+      z-index: 1;
+      transition: background 0.15s;
+    }
+    .browse-btn:hover { background: var(--accent-light); }
+    #fileInput { display: none; }
+
+    .image-preview-state { display: none; position: relative; z-index: 1; width: 100%; }
+    .image-preview-state img { max-width: 100%; max-height: 200px; border-radius: var(--radius-sm); object-fit: contain; }
+    .preview-filename { font-family: var(--mono); font-size: 11px; color: var(--text2); margin-top: 8px; }
+    .change-image-btn {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      background: transparent;
+      border: 0.5px solid var(--border2);
+      color: var(--text2);
+      border-radius: var(--radius-sm);
+      padding: 5px 12px;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: border-color 0.15s;
+    }
+    .change-image-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    .sidebar { display: flex; flex-direction: column; gap: 1rem; }
+
+    .panel {
+      background: var(--bg);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.1rem 1.25rem;
+    }
+    .panel-title {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text3);
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .panel-title svg { width: 13px; height: 13px; stroke: var(--text3); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
+    .field-label {
+      display: block;
+      font-size: 12px;
+      color: var(--text2);
+      margin-bottom: 5px;
+      margin-top: 12px;
+    }
+    .field-label:first-of-type { margin-top: 0; }
+
+    select {
+      width: 100%;
+      font-size: 13px;
+      font-family: var(--sans);
+      background: var(--bg2);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 7px 10px;
+      color: var(--text);
+      appearance: none;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    select:hover, select:focus { border-color: var(--accent); outline: none; }
+
+    .scale-note {
+      font-size: 11px;
+      color: var(--text3);
+      margin-top: 7px;
+      line-height: 1.5;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .toggle-row:last-child { margin-bottom: 0; }
+    .toggle-label { font-size: 13px; color: var(--text); }
+    .toggle {
+      width: 34px;
+      height: 19px;
+      border-radius: 10px;
+      background: var(--bg2);
+      border: 0.5px solid var(--border2);
+      cursor: pointer;
+      position: relative;
+      transition: background 0.2s, border-color 0.2s;
+      flex-shrink: 0;
+    }
+    .toggle.on { background: var(--accent); border-color: var(--accent); }
+    .toggle::after {
+      content: '';
+      position: absolute;
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: white;
+      top: 2.5px;
+      left: 2.5px;
+      transition: transform 0.2s;
+    }
+    .toggle.on::after { transform: translateX(15px); }
+
+    .generate-btn {
+      width: 100%;
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: var(--radius-sm);
+      padding: 13px;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .generate-btn:hover { opacity: 0.88; }
+    .generate-btn:active { transform: scale(0.98); }
+    .generate-btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+    .generate-btn svg { width: 14px; height: 14px; stroke: white; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+    #processingSection { display: none; margin-top: 1.5rem; }
+    .processing-panel {
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      background: var(--bg);
+    }
+    .processing-header {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text3);
+      margin-bottom: 1rem;
+    }
+    .progress-bar-track {
+      width: 100%;
+      height: 3px;
+      background: var(--bg2);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: 0.75rem;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+      transition: width 0.3s ease;
+      width: 0%;
+    }
+    .progress-status { font-size: 13px; color: var(--text2); }
+
+    #resultSection { display: none; margin-top: 1.5rem; }
+    .result-panel {
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--bg);
+    }
+    .viewer-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.85rem 1.25rem;
+      border-bottom: 0.5px solid var(--border);
+    }
+    .viewer-title {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text3);
+    }
+    .viewer-hint { font-size: 12px; color: var(--text3); }
+    #threeCanvas {
+      width: 100%;
+      height: 380px;
+      display: block;
+      background: var(--bg2);
+    }
+    .download-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      border-top: 0.5px solid var(--border);
+    }
+    .download-btn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 1rem 1.25rem;
+      background: var(--bg);
+      border: none;
+      cursor: pointer;
+      transition: background 0.15s;
+      text-align: left;
+      border-right: 0.5px solid var(--border);
+    }
+    .download-btn:last-child { border-right: none; }
+    .download-btn:hover { background: var(--bg2); }
+    .download-icon {
+      width: 36px;
+      height: 36px;
+      border: 0.5px solid var(--border2);
+      border-radius: var(--radius-sm);
+      background: var(--bg2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .download-icon svg { width: 16px; height: 16px; stroke: var(--accent); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+    .download-info { flex: 1; }
+    .download-format { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--text); }
+    .download-desc { font-size: 11px; color: var(--text3); margin-top: 1px; }
+
+    .start-over-row {
+      padding: 0.85rem 1.25rem;
+      border-top: 0.5px solid var(--border);
+      text-align: center;
+    }
+    .start-over-btn {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: transparent;
+      border: none;
+      color: var(--text3);
+      cursor: pointer;
+      transition: color 0.15s;
+    }
+    .start-over-btn:hover { color: var(--text); }
+
+    #errorSection { display: none; margin-top: 1.5rem; }
+    .error-panel {
+      border: 0.5px solid rgba(200,60,60,0.35);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      background: rgba(200,60,60,0.05);
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .error-icon { color: #C83C3C; font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+    .error-title { font-size: 14px; font-weight: 500; color: var(--text); margin-bottom: 4px; }
+    .error-msg { font-size: 13px; color: var(--text2); }
+    .retry-btn {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: transparent;
+      border: 0.5px solid var(--border2);
+      color: var(--text2);
+      border-radius: var(--radius-sm);
+      padding: 6px 14px;
+      cursor: pointer;
+      margin-top: 10px;
+      display: inline-block;
+    }
+    .retry-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    .how-section {
+      margin-top: 3rem;
+      padding-top: 2rem;
+      border-top: 0.5px solid var(--border);
+    }
+    .section-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text3);
+      margin-bottom: 1.5rem;
+    }
+    .steps-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1.5rem;
+    }
+    @media (max-width: 580px) {
+      .steps-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    .step-num {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--accent);
+      margin-bottom: 7px;
+    }
+    .step-name { font-size: 14px; font-weight: 500; color: var(--text); margin-bottom: 4px; }
+    .step-desc { font-size: 12px; color: var(--text2); line-height: 1.55; }
+
+    footer {
+      margin-top: 2.5rem;
+      padding-top: 1.25rem;
+      border-top: 0.5px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      font-size: 12px;
+      color: var(--text3);
+    }
+    .stack-tag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <h1>🎨 Image to 3D Environment Generator</h1>
-            <p class="subtitle">Transform 2D images into complete explorable 3D spaces</p>
-            <p class="tagline">
-                Free & Open Source • No Account Required • Export to Unity/Unreal/Blender
-            </p>
-        </header>
+  <div class="page">
 
-        <!-- Main Content -->
-        <main class="main-content">
-            <!-- Upload Section -->
-            <section class="upload-section" id="uploadSection">
-                <div class="upload-box" id="uploadBox">
-                    <div class="upload-icon">📁</div>
-                    <h2>Drop your image here</h2>
-                    <p>or click to browse</p>
-                    <p class="file-info">Supports: JPG, PNG, WEBP, BMP, TIFF • Max 16MB</p>
-                    <input type="file" id="fileInput" accept="image/*" hidden>
-                    <button class="btn btn-primary" id="browseBtn">Browse Files</button>
-                </div>
+    <nav>
+      <div class="logo">All<span>space</span></div>
+      <div class="nav-links">
+        <a href="https://github.com/RattusKing/Allspace" target="_blank">GitHub</a>
+        <a href="https://github.com/RattusKing/Allspace/blob/main/LICENSE" target="_blank">MIT License</a>
+      </div>
+    </nav>
 
-                <!-- Preview Section -->
-                <div class="preview-section hidden" id="previewSection">
-                    <div class="preview-image">
-                        <img id="previewImg" src="" alt="Preview">
-                    </div>
-                    <div class="preview-info">
-                        <h3>Image loaded</h3>
-                        <p id="fileName">filename.jpg</p>
-                        <button class="btn btn-secondary" id="changeImageBtn">Change Image</button>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Options Section -->
-            <section class="options-section hidden" id="optionsSection">
-                <h2>⚙️ Generation Options</h2>
-
-                <div class="option-group">
-                    <label class="option-label">
-                        <input type="checkbox" id="hallucinateCheckbox" checked>
-                        <span>Hallucinate unseen areas (generate rooms, interiors, etc.)</span>
-                    </label>
-                </div>
-
-                <div class="option-group">
-                    <label class="option-label">
-                        <input type="checkbox" id="interiorsCheckbox" checked>
-                        <span>Generate interior elements</span>
-                    </label>
-                </div>
-
-                <div class="option-group">
-                    <label>Room Complexity:</label>
-                    <select id="complexitySelect" class="select-input">
-                        <option value="low">Low (faster)</option>
-                        <option value="medium" selected>Medium</option>
-                        <option value="high">High (more detail)</option>
-                    </select>
-                </div>
-
-                <div class="option-group">
-                    <label>Wall Thickness (meters):</label>
-                    <input type="range" id="wallThicknessSlider" min="0.1" max="1.0" step="0.1" value="0.3">
-                    <span id="wallThicknessValue">0.3</span>
-                </div>
-
-                <div class="option-group">
-                    <label>Floor Plan Scale <span class="option-hint">(for architectural drawings)</span>:</label>
-                    <select id="floorPlanScaleSelect" class="select-input">
-                        <option value="auto">Auto (normalized)</option>
-                        <option value="50">1:50 — very detailed / small area</option>
-                        <option value="100" selected>1:100 — typical residential</option>
-                        <option value="200">1:200 — larger buildings</option>
-                        <option value="500">1:500 — site plans</option>
-                    </select>
-                    <p class="option-note">Sets real-world meter scale on exported model. Assumes 96 DPI scan.</p>
-                </div>
-
-                <button class="btn btn-primary btn-large" id="generateBtn">
-                    🚀 Generate 3D Environment
-                </button>
-            </section>
-
-            <!-- Progress Section -->
-            <section class="progress-section hidden" id="progressSection">
-                <h2>⚡ Processing...</h2>
-                <div class="progress-bar">
-                    <div class="progress-fill" id="progressFill"></div>
-                </div>
-                <p class="progress-text" id="progressText">Uploading image...</p>
-                <p class="progress-percent" id="progressPercent">0%</p>
-            </section>
-
-            <!-- Results Section -->
-            <section class="results-section hidden" id="resultsSection">
-                <h2>✅ Generation Complete!</h2>
-
-                <!-- 3D Preview -->
-                <div class="viewer-container">
-                    <div id="viewer3d" class="viewer-3d">
-                        <div id="walkCrosshair" class="crosshair hidden"></div>
-                    </div>
-                    <div class="viewer-controls">
-                        <span id="viewerHint">🖱️ Left-click + drag: Rotate • Right-click + drag: Pan • Scroll: Zoom</span>
-                        <button class="btn btn-walk" id="walkToggleBtn" onclick="toggleWalkMode()">🚶 Walk Mode</button>
-                    </div>
-                </div>
-
-                <!-- Download Options -->
-                <div class="download-section">
-                    <h3>📥 Download Your 3D Model</h3>
-                    <div class="download-buttons">
-                        <button class="btn btn-download" id="downloadGlbBtn">
-                            <span class="download-icon">📦</span>
-                            <div>
-                                <strong>Download GLB</strong>
-                                <small>For web viewers, Three.js</small>
-                            </div>
-                        </button>
-                        <button class="btn btn-download" id="downloadFbxBtn">
-                            <span class="download-icon">🎮</span>
-                            <div>
-                                <strong>Download FBX</strong>
-                                <small>For Unity, Unreal Engine, Blender</small>
-                            </div>
-                        </button>
-                    </div>
-                </div>
-
-                <button class="btn btn-secondary" id="startOverBtn">Start Over</button>
-            </section>
-
-            <!-- Error Section -->
-            <section class="error-section hidden" id="errorSection">
-                <h2>❌ Error</h2>
-                <p id="errorMessage">Something went wrong</p>
-                <button class="btn btn-secondary" id="retryBtn">Try Again</button>
-            </section>
-        </main>
-
-        <!-- Info Section -->
-        <section class="info-section">
-            <h2>ℹ️ How It Works</h2>
-            <div class="info-grid">
-                <div class="info-card">
-                    <div class="info-icon">1️⃣</div>
-                    <h3>Upload Image</h3>
-                    <p>Upload any 2D image - photos, maps, concept art, etc.</p>
-                </div>
-                <div class="info-card">
-                    <div class="info-icon">2️⃣</div>
-                    <h3>AI Analysis</h3>
-                    <p>Detects walls, rooms, openings and scene structure from your image</p>
-                </div>
-                <div class="info-card">
-                    <div class="info-icon">3️⃣</div>
-                    <h3>Hallucination</h3>
-                    <p>Procedurally generates unseen areas like rooms and interiors</p>
-                </div>
-                <div class="info-card">
-                    <div class="info-icon">4️⃣</div>
-                    <h3>Export</h3>
-                    <p>Download as GLB or FBX for use in your favorite 3D software</p>
-                </div>
-            </div>
-        </section>
-
-        <!-- Footer -->
-        <footer class="footer">
-            <p>
-                Made with ❤️ as Free & Open Source Software
-                • <a href="https://github.com/RattusKing/Allspace" target="_blank">GitHub</a>
-                • <a href="https://github.com/RattusKing/Allspace/blob/claude/2d-to-3d-environment-l0rm5/LICENSE" target="_blank">MIT License</a>
-            </p>
-            <p class="tech-stack">
-                Built with Flask • Three.js • OpenCV • trimesh
-            </p>
-        </footer>
+    <div class="hero">
+      <div class="eyebrow">Architectural 2D → 3D Converter</div>
+      <h1>Turn floor plans into<br>explorable 3D models</h1>
+      <p class="hero-sub">Built for architects and floor plan designers. Upload your drawing and Allspace detects walls, openings, and room structure — then exports a fully navigable 3D model ready for your workflow.</p>
+      <div class="badges">
+        <span class="badge">Free &amp; Open Source</span>
+        <span class="badge">No account required</span>
+        <span class="badge">GLB · FBX · Unity · Blender</span>
+      </div>
     </div>
 
-    <!-- Three.js for 3D preview -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <div class="main-grid">
+      <div>
+        <div class="upload-zone" id="uploadZone">
+          <div class="grid-bg"></div>
+          <div id="uploadDefault">
+            <div style="display:flex;flex-direction:column;align-items:center;gap:0.85rem;">
+              <div class="upload-icon-wrap">
+                <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              </div>
+              <div class="upload-label">Drop your floor plan or building concept</div>
+              <div class="upload-sub">JPG, PNG, WEBP, BMP, TIFF · Max 16 MB</div>
+              <button class="browse-btn" onclick="document.getElementById('fileInput').click()">Browse files</button>
+            </div>
+          </div>
+          <div class="image-preview-state" id="imagePreview">
+            <img id="previewImg" src="" alt="Uploaded floor plan preview" />
+            <div class="preview-filename" id="previewFilename"></div>
+            <button class="change-image-btn" onclick="document.getElementById('fileInput').click()">Change image</button>
+          </div>
+          <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.webp,.bmp,.tiff,.tif" />
+        </div>
+      </div>
 
-    <!-- Application Scripts -->
-    <script src="viewer.js"></script>
-    <script src="app.js"></script>
+      <div class="sidebar">
+        <div class="panel">
+          <div class="panel-title">
+            <svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+            Generation
+          </div>
+          <div class="toggle-row">
+            <span class="toggle-label">Interior elements</span>
+            <div class="toggle" id="toggleInterior" onclick="this.classList.toggle('on')" role="switch" aria-checked="false"></div>
+          </div>
+          <label class="field-label" for="complexitySelect">Room complexity</label>
+          <select id="complexitySelect">
+            <option value="low">Low — faster</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High — more detail</option>
+          </select>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">
+            <svg viewBox="0 0 24 24"><path d="M21 6H3"/><path d="M10 12H3"/><path d="M10 18H3"/><polyline points="17 15 20 18 17 21"/><polyline points="20 9 17 12 20 15"/></svg>
+            Scale
+          </div>
+          <label class="field-label" for="scaleSelect">Floor plan scale</label>
+          <select id="scaleSelect">
+            <option value="auto">Auto — normalized</option>
+            <option value="50">1:50 — detailed / small area</option>
+            <option value="100" selected>1:100 — typical residential</option>
+            <option value="200">1:200 — larger buildings</option>
+            <option value="500">1:500 — site plans</option>
+          </select>
+          <p class="scale-note">Sets real-world metre scale on the exported model. Assumes 96 DPI scan.</p>
+        </div>
+
+        <button class="generate-btn" id="generateBtn" disabled onclick="startGeneration()">
+          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Generate 3D model
+        </button>
+      </div>
+    </div>
+
+    <div id="processingSection">
+      <div class="processing-panel">
+        <div class="processing-header">Processing</div>
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-status" id="progressStatus">Uploading floor plan...</div>
+      </div>
+    </div>
+
+    <div id="resultSection">
+      <div class="result-panel">
+        <div class="viewer-header">
+          <span class="viewer-title">3D Preview</span>
+          <span class="viewer-hint">Drag to rotate · Scroll to zoom · Right-drag to pan</span>
+        </div>
+        <canvas id="threeCanvas"></canvas>
+        <div class="download-row">
+          <button class="download-btn" id="downloadGLB">
+            <div class="download-icon">
+              <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </div>
+            <div class="download-info">
+              <div class="download-format">Download GLB</div>
+              <div class="download-desc">For web viewers, Three.js</div>
+            </div>
+          </button>
+          <button class="download-btn" id="downloadFBX">
+            <div class="download-icon">
+              <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </div>
+            <div class="download-info">
+              <div class="download-format">Download FBX</div>
+              <div class="download-desc">Unity, Unreal Engine, Blender</div>
+            </div>
+          </button>
+        </div>
+        <div class="start-over-row">
+          <button class="start-over-btn" onclick="resetAll()">Start over</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="errorSection">
+      <div class="error-panel">
+        <div class="error-icon">✕</div>
+        <div>
+          <div class="error-title">Generation failed</div>
+          <div class="error-msg" id="errorMsg">Something went wrong. Please try again.</div>
+          <button class="retry-btn" onclick="resetAll()">Try again</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="how-section">
+      <div class="section-label">How it works</div>
+      <div class="steps-grid">
+        <div>
+          <div class="step-num">01</div>
+          <div class="step-name">Upload</div>
+          <div class="step-desc">Any floor plan or building concept — hand-drawn, CAD export, or scanned drawing</div>
+        </div>
+        <div>
+          <div class="step-num">02</div>
+          <div class="step-name">Analyse</div>
+          <div class="step-desc">AI reads walls, rooms, doors, and openings from your architectural drawing</div>
+        </div>
+        <div>
+          <div class="step-num">03</div>
+          <div class="step-name">Generate</div>
+          <div class="step-desc">Builds a fully structured 3D model scaled to your floor plan's real-world dimensions</div>
+        </div>
+        <div>
+          <div class="step-num">04</div>
+          <div class="step-name">Export</div>
+          <div class="step-desc">Download as GLB or FBX — ready for Unity, Unreal, or Blender</div>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <span>Made as free &amp; open source software · <a href="https://github.com/RattusKing/Allspace/blob/main/LICENSE" target="_blank">MIT License</a> · <a href="https://github.com/RattusKing/Allspace" target="_blank">GitHub</a></span>
+      <span class="stack-tag">Flask · Three.js · OpenCV · trimesh</span>
+    </footer>
+
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const uploadZone = document.getElementById('uploadZone');
+    const uploadDefault = document.getElementById('uploadDefault');
+    const imagePreview = document.getElementById('imagePreview');
+    const previewImg = document.getElementById('previewImg');
+    const previewFilename = document.getElementById('previewFilename');
+    const generateBtn = document.getElementById('generateBtn');
+
+    let selectedFile = null;
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files[0]) handleFile(e.target.files[0]);
+    });
+
+    uploadZone.addEventListener('click', (e) => {
+      if (e.target === uploadZone || e.target.classList.contains('grid-bg') || e.target.classList.contains('upload-label') || e.target.classList.contains('upload-sub')) {
+        fileInput.click();
+      }
+    });
+
+    uploadZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadZone.classList.add('drag-over');
+    });
+    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+    uploadZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadZone.classList.remove('drag-over');
+      if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+    });
+
+    function handleFile(file) {
+      selectedFile = file;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        previewImg.src = e.target.result;
+        previewFilename.textContent = file.name;
+        uploadDefault.style.display = 'none';
+        imagePreview.style.display = 'block';
+        generateBtn.disabled = false;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    document.getElementById('toggleInterior').addEventListener('click', function() {
+      this.setAttribute('aria-checked', this.classList.contains('on').toString());
+    });
+
+    function startGeneration() {
+      if (!selectedFile) return;
+
+      document.getElementById('processingSection').style.display = 'block';
+      document.getElementById('resultSection').style.display = 'none';
+      document.getElementById('errorSection').style.display = 'none';
+      generateBtn.disabled = true;
+
+      const formData = new FormData();
+      formData.append('image', selectedFile);
+      formData.append('generate_interiors', document.getElementById('toggleInterior').classList.contains('on'));
+      formData.append('complexity', document.getElementById('complexitySelect').value);
+      formData.append('scale', document.getElementById('scaleSelect').value);
+
+      const progressFill = document.getElementById('progressFill');
+      const progressStatus = document.getElementById('progressStatus');
+
+      const steps = [
+        { pct: 15, msg: 'Uploading floor plan...' },
+        { pct: 35, msg: 'Analysing architectural geometry...' },
+        { pct: 60, msg: 'Generating 3D structure...' },
+        { pct: 85, msg: 'Building export files...' },
+      ];
+      let stepIdx = 0;
+      const progressInterval = setInterval(() => {
+        if (stepIdx < steps.length) {
+          progressFill.style.width = steps[stepIdx].pct + '%';
+          progressStatus.textContent = steps[stepIdx].msg;
+          stepIdx++;
+        }
+      }, 800);
+
+      fetch('/generate', { method: 'POST', body: formData })
+        .then(res => {
+          if (!res.ok) throw new Error('Server error: ' + res.status);
+          return res.json();
+        })
+        .then(data => {
+          clearInterval(progressInterval);
+          progressFill.style.width = '100%';
+          progressStatus.textContent = 'Complete';
+          setTimeout(() => {
+            document.getElementById('processingSection').style.display = 'none';
+            document.getElementById('resultSection').style.display = 'block';
+            initViewer(data);
+            document.getElementById('downloadGLB').onclick = () => window.location.href = data.glb_url;
+            document.getElementById('downloadFBX').onclick = () => window.location.href = data.fbx_url;
+          }, 400);
+        })
+        .catch(err => {
+          clearInterval(progressInterval);
+          document.getElementById('processingSection').style.display = 'none';
+          document.getElementById('errorSection').style.display = 'block';
+          document.getElementById('errorMsg').textContent = err.message || 'Something went wrong. Please try again.';
+          generateBtn.disabled = false;
+        });
+    }
+
+    function initViewer(data) {
+      const canvas = document.getElementById('threeCanvas');
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+      renderer.setClearColor(0x1a1917);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(50, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+      camera.position.set(0, 8, 12);
+      camera.lookAt(0, 0, 0);
+
+      scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+      const dirLight = new THREE.DirectionalLight(0xfff3e0, 0.9);
+      dirLight.position.set(5, 10, 7);
+      scene.add(dirLight);
+
+      if (data && data.model_url) {
+        const loader = new THREE.GLTFLoader ? new THREE.GLTFLoader() : null;
+        if (loader) {
+          loader.load(data.model_url, (gltf) => { scene.add(gltf.scene); });
+        }
+      } else {
+        const geo = new THREE.BoxGeometry(4, 0.1, 4);
+        const mat = new THREE.MeshStandardMaterial({ color: 0x3a3530 });
+        scene.add(new THREE.Mesh(geo, mat));
+        const wallMat = new THREE.MeshStandardMaterial({ color: 0xb07d3a, opacity: 0.8, transparent: true });
+        [[0,1,0.1,4,2],[3.95,1,4,0.1,2],[-3.95,1,4,0.1,2],[0,1,0.1,4,2]].forEach(([x,y,w,d,h], i) => {
+          const wm = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
+          wm.position.set(i === 0 ? 0 : x, y, i === 0 ? (i < 2 ? -2 : 2) : 0);
+          scene.add(wm);
+        });
+      }
+
+      let isDragging = false, isRightDragging = false;
+      let lastX = 0, lastY = 0;
+      let theta = 0.4, phi = 1.1, radius = 14;
+      let panX = 0, panY = 0;
+
+      function updateCamera() {
+        camera.position.set(
+          panX + radius * Math.sin(phi) * Math.sin(theta),
+          panY + radius * Math.cos(phi),
+          radius * Math.sin(phi) * Math.cos(theta)
+        );
+        camera.lookAt(panX, panY, 0);
+      }
+      updateCamera();
+
+      canvas.addEventListener('mousedown', (e) => {
+        if (e.button === 2) isRightDragging = true;
+        else isDragging = true;
+        lastX = e.clientX; lastY = e.clientY;
+      });
+      window.addEventListener('mouseup', () => { isDragging = false; isRightDragging = false; });
+      canvas.addEventListener('mousemove', (e) => {
+        const dx = e.clientX - lastX, dy = e.clientY - lastY;
+        if (isDragging) { theta -= dx * 0.008; phi = Math.max(0.2, Math.min(Math.PI - 0.2, phi + dy * 0.008)); }
+        if (isRightDragging) { panX -= dx * 0.02; panY += dy * 0.02; }
+        if (isDragging || isRightDragging) updateCamera();
+        lastX = e.clientX; lastY = e.clientY;
+      });
+      canvas.addEventListener('wheel', (e) => {
+        radius = Math.max(2, Math.min(40, radius + e.deltaY * 0.02));
+        updateCamera();
+      });
+      canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+      (function animate() {
+        requestAnimationFrame(animate);
+        renderer.render(scene, camera);
+      })();
+    }
+
+    function resetAll() {
+      selectedFile = null;
+      fileInput.value = '';
+      previewImg.src = '';
+      uploadDefault.style.display = 'block';
+      imagePreview.style.display = 'none';
+      generateBtn.disabled = true;
+      document.getElementById('processingSection').style.display = 'none';
+      document.getElementById('resultSection').style.display = 'none';
+      document.getElementById('errorSection').style.display = 'none';
+      document.getElementById('progressFill').style.width = '0%';
+    }
+  </script>
 </body>
 </html>
