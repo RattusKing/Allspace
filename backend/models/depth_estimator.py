@@ -288,45 +288,46 @@ class DepthEstimator:
         min_dim = min(height, width)
 
         # ── Step 1: Find dark structural pixels ──────────────────────────────
-        _, dark = cv2.threshold(img_gray, 100, 255, cv2.THRESH_BINARY_INV)
+        # 120 catches dark navy/black walls (grayscale 0-80) and JPEG-bloomed
+        # edge pixels (80-120) without picking up cyan annotations (~150+).
+        _, dark = cv2.threshold(img_gray, 120, 255, cv2.THRESH_BINARY_INV)
         # Remove single-pixel speckles
         dark = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
 
         # ── Step 2: Two-stage morphological close ─────────────────────────────
-        # Stage A – small close: fuse broken stroke pixels within a single line
-        ck1 = max(3, min_dim // 80)          # ~4 px at 350 px
+        # Stage A – small close: fuses stroke pixel gaps caused by JPEG artifacts
+        ck1 = max(3, min_dim // 80)              # ~4 px at 350 px
         stage_a = cv2.morphologyEx(
             dark, cv2.MORPH_CLOSE, np.ones((ck1, ck1), np.uint8)
         )
+        del dark
 
-        # Stage B – larger close: bridge the white gap between the two parallel
-        # lines that represent a wall's inner and outer face in CAD drawings.
-        # Walls at typical 1:100 scan resolutions leave a 4-12 px gap.
-        ck2 = max(7, min_dim // 35)          # ~10 px at 350 px, ~18 px at 640 px
+        # Stage B – larger close: bridges the white body gap between the two
+        # parallel face lines that CAD drawings use to represent wall thickness.
+        # Walls at 1:100 on a 96 Dpi scan leave a 4-14 px gap at 640 px.
+        ck2 = max(7, min_dim // 35)              # ~10 px at 350 px, ~18 px at 640 px
         stage_b = cv2.morphologyEx(
             stage_a, cv2.MORPH_CLOSE,
             np.ones((ck2, ck2), np.uint8), iterations=2
         )
-        del dark, stage_a
+        del stage_a
 
-        # ── Step 3: Open pass to destroy under-sized text blobs ──────────────
-        # Text characters (≤10 px tall at these resolutions) survive the closing
-        # as compact blobs. An erosion that destroys anything thinner than
-        # half the closing kernel eliminates most text while preserving walls
-        # whose bodies are now > ck2 pixels wide after Stage B.
-        open_k = max(3, ck2 // 2)
-        opened = cv2.morphologyEx(
-            stage_b, cv2.MORPH_OPEN, np.ones((open_k, open_k), np.uint8)
-        )
+        # NOTE: No open/erode pass here.  The open pass in the previous version
+        # destroyed single-line walls (2-4 px wide) because they don't grow
+        # wide enough for the open kernel to spare them.  Text removal is
+        # handled solely by the area filter below.
+
+        # ── Step 3: Connected-component area filter ───────────────────────────
+        # Single wall lines stay narrow after closing (close fills gaps, not
+        # width).  Multiple nearby lines merge into larger blobs.  Text
+        # characters form small isolated blobs that rarely exceed 0.3 % of the
+        # image area; the 0.3 % floor discards them.
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(stage_b, connectivity=8)
         del stage_b
 
-        # ── Step 4: Connected-component area filter ───────────────────────────
-        n, labels, stats, _ = cv2.connectedComponentsWithStats(opened, connectivity=8)
-        del opened
-
         wall_mask = np.zeros((height, width), dtype=np.uint8)
-        min_area = max(150, int(width * height * 0.002))   # ~0.2 % of image
-        max_area = int(width * height * 0.40)
+        min_area = max(200, int(width * height * 0.003))   # 0.3 % min
+        max_area = int(width * height * 0.45)
         kept = 0
         for i in range(1, n):
             a = int(stats[i, cv2.CC_STAT_AREA])
@@ -334,6 +335,10 @@ class DepthEstimator:
                 wall_mask[labels == i] = 255
                 kept += 1
         del labels, stats
+
+        # Light dilation to give thin surviving wall lines a few extra pixels
+        # of body so contour extrusion in the mesh generator sees solid quads.
+        wall_mask = cv2.dilate(wall_mask, np.ones((3, 3), np.uint8), iterations=1)
 
         depth = np.zeros((height, width), dtype=np.float32)
         depth[wall_mask > 0] = 1.0
