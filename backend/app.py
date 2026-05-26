@@ -1,11 +1,10 @@
 """
-Image to 3D Environment Generator - Flask Backend API
-Converts 2D images into explorable 3D environments with procedurally generated unseen areas
+Allspace — Floor Plan to 3D Model Converter
+Flask backend API
 """
 
 import os
 import uuid
-import shutil
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
@@ -13,10 +12,8 @@ from werkzeug.utils import secure_filename
 import threading
 import time
 
-# Import our custom modules
 from models.depth_estimator import DepthEstimator
 from utils.mesh_generator import MeshGenerator
-from utils.procedural_generator import ProceduralGenerator
 from utils.exporter import ModelExporter
 
 app = Flask(__name__)
@@ -38,10 +35,8 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# Initialize AI models and generators
 depth_estimator = DepthEstimator()
 mesh_generator = MeshGenerator()
-procedural_generator = ProceduralGenerator()
 model_exporter = ModelExporter()
 
 # Store for tracking generation jobs
@@ -103,219 +98,15 @@ cleanup_thread.start()
 
 @app.route('/', methods=['GET'])
 def index():
-    """Health check endpoint"""
     return jsonify({
         'status': 'online',
-        'service': 'Image to 3D Environment Generator',
-        'version': '1.0.0',
+        'service': 'Allspace — Floor Plan to 3D Model Converter',
+        'version': '2.0.0',
         'endpoints': {
-            'upload': '/api/upload',
-            'generate': '/api/generate',
-            'status': '/api/status/<job_id>',
+            'generate': '/generate',
             'download': '/api/download/<job_id>/<format>'
         }
     })
-
-
-@app.route('/api/upload', methods=['POST'])
-def upload_image():
-    """
-    Upload an image for 3D conversion
-    Returns: job_id for tracking the upload
-    """
-    try:
-        # Check if file is in request
-        if 'image' not in request.files:
-            return jsonify({'error': 'No image file provided'}), 400
-
-        file = request.files['image']
-
-        # Check if filename is empty
-        if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
-
-        # Validate file type
-        if not allowed_file(file.filename):
-            return jsonify({'error': f'Invalid file type. Allowed: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
-
-        # Generate unique job ID
-        job_id = str(uuid.uuid4())
-
-        # Save file with job_id
-        filename = secure_filename(file.filename)
-        file_ext = filename.rsplit('.', 1)[1].lower()
-        save_filename = f"{job_id}.{file_ext}"
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], save_filename)
-        file.save(filepath)
-
-        # Store job information
-        generation_jobs[job_id] = {
-            'status': 'uploaded',
-            'filename': save_filename,
-            'original_filename': filename,
-            'created_at': datetime.now().isoformat(),
-            'progress': 0
-        }
-
-        return jsonify({
-            'success': True,
-            'job_id': job_id,
-            'message': 'Image uploaded successfully'
-        }), 200
-
-    except Exception as e:
-        return jsonify({'error': f'Upload failed: {str(e)}'}), 500
-
-
-@app.route('/api/generate', methods=['POST'])
-def generate_3d():
-    """
-    Generate 3D environment from uploaded image
-    Expects: job_id and optional parameters
-    """
-    try:
-        data = request.get_json()
-
-        if not data or 'job_id' not in data:
-            return jsonify({'error': 'job_id is required'}), 400
-
-        job_id = data['job_id']
-
-        # Validate job exists
-        if job_id not in generation_jobs:
-            return jsonify({'error': 'Invalid job_id'}), 404
-
-        job = generation_jobs[job_id]
-
-        if job['status'] != 'uploaded':
-            return jsonify({'error': f'Job already {job["status"]}'}), 400
-
-        # Get optional parameters
-        options = {
-            'room_complexity': data.get('room_complexity', 'medium'),  # low, medium, high
-            'wall_thickness': data.get('wall_thickness', 0.3),
-            'generate_interiors': data.get('generate_interiors', True),
-            'floor_plan_scale': data.get('floor_plan_scale', 'auto'),  # 'auto' | '50'|'100'|'200'|'500'
-        }
-
-        # Start generation in background thread
-        def generate_async():
-            try:
-                job['status'] = 'processing'
-                job['progress'] = 10
-
-                # Load image
-                image_path = os.path.join(app.config['UPLOAD_FOLDER'], job['filename'])
-
-                # Step 1: Generate depth map
-                job['progress'] = 20
-                job['current_step'] = 'Estimating depth'
-                depth_map, confidence_map, scene_type = depth_estimator.estimate_depth(image_path)
-                job['scene_type'] = scene_type
-
-                # Step 2: Create base 3D mesh from image and depth
-                job['progress'] = 40
-                job['current_step'] = 'Generating base mesh'
-
-                # Compute real-world scale factor for floor plans.
-                # floor_plan_scale is the drawing ratio (e.g. '100' for 1:100).
-                # We assume 96 DPI scan and convert pixels → real metres so the
-                # exported GLB imports at correct scale in Revit / SketchUp.
-                from PIL import Image as _PIL_Image
-                with _PIL_Image.open(image_path) as _pil_im:
-                    img_px_w, img_px_h = _pil_im.size
-                del _PIL_Image
-
-                scale_str = options.get('floor_plan_scale', 'auto')
-                if scale_str != 'auto' and scene_type == 'floor_plan':
-                    scale_ratio = float(scale_str)
-                    dpi = 96.0
-                    paper_width_mm  = img_px_w / dpi * 25.4
-                    paper_height_mm = img_px_h / dpi * 25.4
-                    real_width_m  = paper_width_mm  * scale_ratio / 1000.0
-                    real_height_m = paper_height_mm * scale_ratio / 1000.0
-                    # Mesh XZ range is -1..1 (2 units); scale to real metres
-                    scale_factor_x = real_width_m  / 2.0
-                    scale_factor_z = real_height_m / 2.0
-                    print(f"  📐 Scale 1:{int(scale_ratio)}: {real_width_m:.1f}m × {real_height_m:.1f}m real-world")
-                else:
-                    scale_factor_x = 1.0
-                    scale_factor_z = 1.0
-
-                base_mesh, image_data = mesh_generator.create_mesh_from_depth(
-                    image_path, depth_map, confidence_map, scene_type=scene_type,
-                    scale_factor_x=scale_factor_x, scale_factor_z=scale_factor_z
-                )
-
-                enhanced_mesh = base_mesh
-
-                # Step 4: Export to different formats
-                job['progress'] = 80
-                job['current_step'] = 'Exporting models'
-
-                output_files = {}
-
-                # Export GLB
-                glb_path = os.path.join(app.config['OUTPUT_FOLDER'], f"{job_id}.glb")
-                model_exporter.export_glb(enhanced_mesh, glb_path, image_data)
-                output_files['glb'] = f"{job_id}.glb"
-
-                # Export FBX
-                fbx_path = os.path.join(app.config['OUTPUT_FOLDER'], f"{job_id}.fbx")
-                model_exporter.export_fbx(enhanced_mesh, fbx_path, image_data)
-                output_files['fbx'] = f"{job_id}.fbx"
-
-                # Update job status
-                job['progress'] = 100
-                job['status'] = 'completed'
-                job['current_step'] = 'Complete'
-                job['output_files'] = output_files
-                job['completed_at'] = datetime.now().isoformat()
-
-            except Exception as e:
-                job['status'] = 'failed'
-                job['error'] = str(e)
-                job['progress'] = 0
-                print(f"Generation failed for job {job_id}: {str(e)}")
-
-        # Start async generation
-        thread = threading.Thread(target=generate_async)
-        thread.start()
-
-        return jsonify({
-            'success': True,
-            'job_id': job_id,
-            'message': 'Generation started',
-            'status': 'processing'
-        }), 200
-
-    except Exception as e:
-        return jsonify({'error': f'Generation failed: {str(e)}'}), 500
-
-
-@app.route('/api/status/<job_id>', methods=['GET'])
-def get_status(job_id):
-    """Get the status of a generation job"""
-    if job_id not in generation_jobs:
-        return jsonify({'error': 'Invalid job_id'}), 404
-
-    job = generation_jobs[job_id]
-
-    response = {
-        'job_id': job_id,
-        'status': job['status'],
-        'progress': job.get('progress', 0),
-        'current_step': job.get('current_step', ''),
-        'created_at': job['created_at']
-    }
-
-    if job['status'] == 'completed':
-        response['output_files'] = job.get('output_files', {})
-        response['completed_at'] = job.get('completed_at')
-    elif job['status'] == 'failed':
-        response['error'] = job.get('error', 'Unknown error')
-
-    return jsonify(response), 200
 
 
 @app.route('/api/download/<job_id>/<format>', methods=['GET'])
