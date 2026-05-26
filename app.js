@@ -168,7 +168,6 @@ async function startGeneration(jobId) {
         const scaleValue = floorPlanScaleSelect ? floorPlanScaleSelect.value : 'auto';
         const options = {
             job_id: jobId,
-            hallucinate_unseen: document.getElementById('hallucinateCheckbox').checked,
             generate_interiors: document.getElementById('interiorsCheckbox').checked,
             room_complexity: document.getElementById('complexitySelect').value,
             wall_thickness: parseFloat(wallThicknessSlider.value),

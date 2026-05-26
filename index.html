@@ -505,116 +505,166 @@
   </style>
 </head>
 <body>
-  <div class="page">
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>🎨 Image to 3D Environment Generator</h1>
+            <p class="subtitle">Transform 2D images into complete explorable 3D spaces</p>
+            <p class="tagline">
+                Free & Open Source • No Account Required • Export to Unity/Unreal/Blender
+            </p>
+        </header>
 
-    <nav>
-      <div class="logo">All<span>space</span></div>
-      <div class="nav-links">
-        <a href="https://github.com/RattusKing/Allspace" target="_blank">GitHub</a>
-        <a href="https://github.com/RattusKing/Allspace/blob/main/LICENSE" target="_blank">MIT License</a>
-      </div>
-    </nav>
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Upload Section -->
+            <section class="upload-section" id="uploadSection">
+                <div class="upload-box" id="uploadBox">
+                    <div class="upload-icon">📁</div>
+                    <h2>Drop your image here</h2>
+                    <p>or click to browse</p>
+                    <p class="file-info">Supports: JPG, PNG, WEBP, BMP, TIFF • Max 16MB</p>
+                    <input type="file" id="fileInput" accept="image/*" hidden>
+                    <button class="btn btn-primary" id="browseBtn">Browse Files</button>
+                </div>
 
-    <div class="hero">
-      <div class="eyebrow">Architectural 2D → 3D Converter</div>
-      <h1>Turn floor plans into<br>explorable 3D models</h1>
-      <p class="hero-sub">Built for architects and floor plan designers. Upload your drawing and Allspace detects walls, openings, and room structure — then exports a fully navigable 3D model ready for your workflow.</p>
-      <div class="badges">
-        <span class="badge">Free &amp; Open Source</span>
-        <span class="badge">No account required</span>
-        <span class="badge">GLB · FBX · Unity · Blender</span>
-      </div>
-    </div>
+                <!-- Preview Section -->
+                <div class="preview-section hidden" id="previewSection">
+                    <div class="preview-image">
+                        <img id="previewImg" src="" alt="Preview">
+                    </div>
+                    <div class="preview-info">
+                        <h3>Image loaded</h3>
+                        <p id="fileName">filename.jpg</p>
+                        <button class="btn btn-secondary" id="changeImageBtn">Change Image</button>
+                    </div>
+                </div>
+            </section>
 
-    <div class="main-grid">
-      <div>
-        <div class="upload-zone" id="uploadZone">
-          <div class="grid-bg"></div>
-          <div id="uploadDefault">
-            <div style="display:flex;flex-direction:column;align-items:center;gap:0.85rem;">
-              <div class="upload-icon-wrap">
-                <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              </div>
-              <div class="upload-label">Drop your floor plan or building concept</div>
-              <div class="upload-sub">JPG, PNG, WEBP, BMP, TIFF · Max 16 MB</div>
-              <button class="browse-btn" onclick="document.getElementById('fileInput').click()">Browse files</button>
-            </div>
-          </div>
-          <div class="image-preview-state" id="imagePreview">
-            <img id="previewImg" src="" alt="Uploaded floor plan preview" />
-            <div class="preview-filename" id="previewFilename"></div>
-            <button class="change-image-btn" onclick="document.getElementById('fileInput').click()">Change image</button>
-          </div>
-          <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.webp,.bmp,.tiff,.tif" />
-        </div>
-      </div>
+            <!-- Options Section -->
+            <section class="options-section hidden" id="optionsSection">
+                <h2>⚙️ Generation Options</h2>
 
-      <div class="sidebar">
-        <div class="panel">
-          <div class="panel-title">
-            <svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
-            Generation
-          </div>
-          <div class="toggle-row">
-            <span class="toggle-label">Interior elements</span>
-            <div class="toggle" id="toggleInterior" onclick="this.classList.toggle('on')" role="switch" aria-checked="false"></div>
-          </div>
-          <label class="field-label" for="complexitySelect">Room complexity</label>
-          <select id="complexitySelect">
-            <option value="low">Low — faster</option>
-            <option value="medium" selected>Medium</option>
-            <option value="high">High — more detail</option>
-          </select>
-        </div>
+                <div class="option-group">
+                    <label class="option-label">
+                        <input type="checkbox" id="interiorsCheckbox" checked>
+                        <span>Generate interior elements</span>
+                    </label>
+                </div>
 
-        <div class="panel">
-          <div class="panel-title">
-            <svg viewBox="0 0 24 24"><path d="M21 6H3"/><path d="M10 12H3"/><path d="M10 18H3"/><polyline points="17 15 20 18 17 21"/><polyline points="20 9 17 12 20 15"/></svg>
-            Scale
-          </div>
-          <label class="field-label" for="scaleSelect">Floor plan scale</label>
-          <select id="scaleSelect">
-            <option value="auto">Auto — normalized</option>
-            <option value="50">1:50 — detailed / small area</option>
-            <option value="100" selected>1:100 — typical residential</option>
-            <option value="200">1:200 — larger buildings</option>
-            <option value="500">1:500 — site plans</option>
-          </select>
-          <p class="scale-note">Sets real-world metre scale on the exported model. Assumes 96 DPI scan.</p>
-        </div>
+                <div class="option-group">
+                    <label>Room Complexity:</label>
+                    <select id="complexitySelect" class="select-input">
+                        <option value="low">Low (faster)</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="high">High (more detail)</option>
+                    </select>
+                </div>
 
-        <button class="generate-btn" id="generateBtn" disabled onclick="startGeneration()">
-          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          Generate 3D model
-        </button>
-      </div>
-    </div>
+                <div class="option-group">
+                    <label>Wall Thickness (meters):</label>
+                    <input type="range" id="wallThicknessSlider" min="0.1" max="1.0" step="0.1" value="0.3">
+                    <span id="wallThicknessValue">0.3</span>
+                </div>
 
-    <div id="processingSection">
-      <div class="processing-panel">
-        <div class="processing-header">Processing</div>
-        <div class="progress-bar-track">
-          <div class="progress-bar-fill" id="progressFill"></div>
-        </div>
-        <div class="progress-status" id="progressStatus">Uploading floor plan...</div>
-      </div>
-    </div>
+                <div class="option-group">
+                    <label>Floor Plan Scale <span class="option-hint">(for architectural drawings)</span>:</label>
+                    <select id="floorPlanScaleSelect" class="select-input">
+                        <option value="auto">Auto (normalized)</option>
+                        <option value="50">1:50 — very detailed / small area</option>
+                        <option value="100" selected>1:100 — typical residential</option>
+                        <option value="200">1:200 — larger buildings</option>
+                        <option value="500">1:500 — site plans</option>
+                    </select>
+                    <p class="option-note">Sets real-world meter scale on exported model. Assumes 96 DPI scan.</p>
+                </div>
 
-    <div id="resultSection">
-      <div class="result-panel">
-        <div class="viewer-header">
-          <span class="viewer-title">3D Preview</span>
-          <span class="viewer-hint">Drag to rotate · Scroll to zoom · Right-drag to pan</span>
-        </div>
-        <canvas id="threeCanvas"></canvas>
-        <div class="download-row">
-          <button class="download-btn" id="downloadGLB">
-            <div class="download-icon">
-              <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            </div>
-            <div class="download-info">
-              <div class="download-format">Download GLB</div>
-              <div class="download-desc">For web viewers, Three.js</div>
+                <button class="btn btn-primary btn-large" id="generateBtn">
+                    🚀 Generate 3D Environment
+                </button>
+            </section>
+
+            <!-- Progress Section -->
+            <section class="progress-section hidden" id="progressSection">
+                <h2>⚡ Processing...</h2>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <p class="progress-text" id="progressText">Uploading image...</p>
+                <p class="progress-percent" id="progressPercent">0%</p>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section hidden" id="resultsSection">
+                <h2>✅ Generation Complete!</h2>
+
+                <!-- 3D Preview -->
+                <div class="viewer-container">
+                    <div id="viewer3d" class="viewer-3d">
+                        <div id="walkCrosshair" class="crosshair hidden"></div>
+                    </div>
+                    <div class="viewer-controls">
+                        <span id="viewerHint">🖱️ Left-click + drag: Rotate • Right-click + drag: Pan • Scroll: Zoom</span>
+                        <button class="btn btn-walk" id="walkToggleBtn" onclick="toggleWalkMode()">🚶 Walk Mode</button>
+                    </div>
+                </div>
+
+                <!-- Download Options -->
+                <div class="download-section">
+                    <h3>📥 Download Your 3D Model</h3>
+                    <div class="download-buttons">
+                        <button class="btn btn-download" id="downloadGlbBtn">
+                            <span class="download-icon">📦</span>
+                            <div>
+                                <strong>Download GLB</strong>
+                                <small>For web viewers, Three.js</small>
+                            </div>
+                        </button>
+                        <button class="btn btn-download" id="downloadFbxBtn">
+                            <span class="download-icon">🎮</span>
+                            <div>
+                                <strong>Download FBX</strong>
+                                <small>For Unity, Unreal Engine, Blender</small>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+
+                <button class="btn btn-secondary" id="startOverBtn">Start Over</button>
+            </section>
+
+            <!-- Error Section -->
+            <section class="error-section hidden" id="errorSection">
+                <h2>❌ Error</h2>
+                <p id="errorMessage">Something went wrong</p>
+                <button class="btn btn-secondary" id="retryBtn">Try Again</button>
+            </section>
+        </main>
+
+        <!-- Info Section -->
+        <section class="info-section">
+            <h2>ℹ️ How It Works</h2>
+            <div class="info-grid">
+                <div class="info-card">
+                    <div class="info-icon">1️⃣</div>
+                    <h3>Upload Image</h3>
+                    <p>Upload any 2D image - photos, maps, concept art, etc.</p>
+                </div>
+                <div class="info-card">
+                    <div class="info-icon">2️⃣</div>
+                    <h3>AI Analysis</h3>
+                    <p>Detects walls, rooms, openings and scene structure from your image</p>
+                </div>
+                <div class="info-card">
+                    <div class="info-icon">3️⃣</div>
+                    <h3>Hallucination</h3>
+                    <p>Procedurally generates unseen areas like rooms and interiors</p>
+                </div>
+                <div class="info-card">
+                    <div class="info-icon">4️⃣</div>
+                    <h3>Export</h3>
+                    <p>Download as GLB or FBX for use in your favorite 3D software</p>
+                </div>
             </div>
           </button>
           <button class="download-btn" id="downloadFBX">
