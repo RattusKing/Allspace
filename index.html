@@ -7,6 +7,7 @@
   <title>Allspace — Floor Plan to 3D Model Converter</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Cormorant+Garamond:wght@400;600&display=swap" rel="stylesheet" />
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -370,11 +371,13 @@
       color: var(--text3);
     }
     .viewer-hint { font-size: 12px; color: var(--text3); }
-    #threeCanvas {
+    #modelViewer {
       width: 100%;
       height: 380px;
       display: block;
-      background: var(--bg2);
+      background-color: var(--bg2);
+      --progress-bar-color: #c5a572;
+      --progress-mask: transparent;
     }
     .download-row {
       display: grid;
@@ -604,9 +607,9 @@
       <div class="result-panel">
         <div class="viewer-header">
           <span class="viewer-title">3D Preview</span>
-          <span class="viewer-hint">Drag to rotate · Scroll to zoom · Right-drag to pan</span>
+          <span class="viewer-hint">Drag to rotate · Scroll to zoom · Pinch to zoom on mobile</span>
         </div>
-        <canvas id="threeCanvas"></canvas>
+        <model-viewer id="modelViewer" camera-controls shadow-intensity="0.5" tone-mapping="neutral"></model-viewer>
         <div class="download-row">
           <button class="download-btn" id="downloadGLB">
             <div class="download-icon">
@@ -772,7 +775,7 @@
             document.getElementById('resultSection').style.display = 'block';
             document.getElementById('downloadGLB').onclick = () => window.location.href = data.glb_url;
             document.getElementById('downloadFBX').onclick = () => window.location.href = data.fbx_url;
-            requestAnimationFrame(() => initViewer(data));
+            initViewer(data);
           }, 400);
         })
         .catch(err => {
@@ -785,90 +788,11 @@
     }
 
     function initViewer(data) {
-      const canvas = document.getElementById('threeCanvas');
-      const canvasW = canvas.offsetWidth || 800;
-      const canvasH = canvas.offsetHeight || 380;
-      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-      renderer.setPixelRatio(window.devicePixelRatio);
-      renderer.setSize(canvasW, canvasH);
-      renderer.setClearColor(0x1a1917);
-
-      const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(50, canvasW / canvasH, 0.1, 1000);
-
-      scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-      const dirLight = new THREE.DirectionalLight(0xfff3e0, 0.9);
-      dirLight.position.set(5, 10, 7);
-      scene.add(dirLight);
-
+      const viewer = document.getElementById('modelViewer');
       if (data && data.model_url) {
-        const loader = typeof THREE.GLTFLoader !== 'undefined' ? new THREE.GLTFLoader() : null;
-        if (loader) {
-          loader.load(data.model_url, (gltf) => {
-            scene.add(gltf.scene);
-            const box = new THREE.Box3().setFromObject(gltf.scene);
-            const center = box.getCenter(new THREE.Vector3());
-            const size = box.getSize(new THREE.Vector3());
-            radius = Math.max(size.x, size.y, size.z) * 2.5;
-            panX = center.x;
-            panY = center.y;
-            updateCamera();
-          }, undefined, (err) => {
-            console.error('GLTFLoader failed:', err);
-          });
-        } else {
-          console.error('THREE.GLTFLoader not available');
-        }
-      } else {
-        const geo = new THREE.BoxGeometry(4, 0.1, 4);
-        const mat = new THREE.MeshStandardMaterial({ color: 0x3a3530 });
-        scene.add(new THREE.Mesh(geo, mat));
-        const wallMat = new THREE.MeshStandardMaterial({ color: 0xb07d3a, opacity: 0.8, transparent: true });
-        [[0,1,0.1,4,2],[3.95,1,4,0.1,2],[-3.95,1,4,0.1,2],[0,1,0.1,4,2]].forEach(([x,y,w,d,h], i) => {
-          const wm = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
-          wm.position.set(i === 0 ? 0 : x, y, i === 0 ? (i < 2 ? -2 : 2) : 0);
-          scene.add(wm);
-        });
+        // Force HTTPS — Render's reverse proxy may produce http:// URLs
+        viewer.src = data.model_url.replace(/^http:\/\//, 'https://');
       }
-
-      let isDragging = false, isRightDragging = false;
-      let lastX = 0, lastY = 0;
-      let theta = 0.4, phi = 1.1, radius = 14;
-      let panX = 0, panY = 0;
-
-      function updateCamera() {
-        camera.position.set(
-          panX + radius * Math.sin(phi) * Math.sin(theta),
-          panY + radius * Math.cos(phi),
-          radius * Math.sin(phi) * Math.cos(theta)
-        );
-        camera.lookAt(panX, panY, 0);
-      }
-      updateCamera();
-
-      canvas.addEventListener('mousedown', (e) => {
-        if (e.button === 2) isRightDragging = true;
-        else isDragging = true;
-        lastX = e.clientX; lastY = e.clientY;
-      });
-      window.addEventListener('mouseup', () => { isDragging = false; isRightDragging = false; });
-      canvas.addEventListener('mousemove', (e) => {
-        const dx = e.clientX - lastX, dy = e.clientY - lastY;
-        if (isDragging) { theta -= dx * 0.008; phi = Math.max(0.2, Math.min(Math.PI - 0.2, phi + dy * 0.008)); }
-        if (isRightDragging) { panX -= dx * 0.02; panY += dy * 0.02; }
-        if (isDragging || isRightDragging) updateCamera();
-        lastX = e.clientX; lastY = e.clientY;
-      });
-      canvas.addEventListener('wheel', (e) => {
-        radius = Math.max(2, Math.min(40, radius + e.deltaY * 0.02));
-        updateCamera();
-      });
-      canvas.addEventListener('contextmenu', e => e.preventDefault());
-
-      (function animate() {
-        requestAnimationFrame(animate);
-        renderer.render(scene, camera);
-      })();
     }
 
     function resetAll() {
@@ -882,6 +806,7 @@
       document.getElementById('resultSection').style.display = 'none';
       document.getElementById('errorSection').style.display = 'none';
       document.getElementById('progressFill').style.width = '0%';
+      document.getElementById('modelViewer').src = '';
     }
   </script>
 </body>
