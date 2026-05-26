@@ -98,15 +98,8 @@ cleanup_thread.start()
 
 @app.route('/', methods=['GET'])
 def index():
-    return jsonify({
-        'status': 'online',
-        'service': 'Allspace — Floor Plan to 3D Model Converter',
-        'version': '2.0.0',
-        'endpoints': {
-            'generate': '/generate',
-            'download': '/api/download/<job_id>/<format>'
-        }
-    })
+    html_path = os.path.join(os.path.dirname(__file__), '..', 'index.html')
+    return send_file(os.path.abspath(html_path))
 
 
 @app.route('/api/download/<job_id>/<format>', methods=['GET'])
