@@ -151,6 +151,7 @@ Run the full pipeline and generate a 3D model.
   - `complexity` — `low` | `medium` (default) | `high`; sets working resolution and contour detail
   - `generate_interiors` — `true` (default) | `false`; toggles per-room colour-coded floors
   - `scale` — `auto` (default) or a numeric scale ratio used to compute real-world dimensions for floor plans
+  - `mode` — `auto` (default) or `floor_plan` to force the floor-plan path when auto-detection misroutes an unusual drawing
 - **Returns**: JSON with `job_id` and absolute download URLs (`model_url` / `glb_url` / `obj_url`)
 
 ### `GET /api/download/<job_id>/<format>`
@@ -226,7 +227,7 @@ No PyTorch, no MiDaS, no Open3D, no neural networks — the engine is entirely c
 
 ## 📊 Limitations
 
-- The wall detector is tuned for dark walls on a clean, light background near one DPI/scale. Blueprints, colored/real-estate plans, gray-filled walls, and photographed plans can break it.
+- The wall detector now normalizes polarity (handles blueprints / dark-theme exports) and uses an adaptive Otsu threshold (handles grey / low-contrast walls), and drops most text/furniture by keeping the connected wall network. Very thin (1–2px) walls and heavily annotated or photographed plans can still degrade results — use **Force floor plan** (the `mode` option) if auto-detection misroutes.
 - Walls are traced as blob outlines (not centerlines) with a fixed thickness, which rounds corners and can inflate room sizes.
 - Door/window openings are guessed from pixel brightness, so they can be wrong.
 - True real-world scale is only approximate, and only when a numeric scale is supplied (it assumes 96 DPI).

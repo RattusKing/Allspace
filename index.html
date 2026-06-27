@@ -568,6 +568,12 @@
             <option value="medium" selected>Medium</option>
             <option value="high">High — more detail</option>
           </select>
+          <label class="field-label" for="modeSelect">Input type</label>
+          <select id="modeSelect">
+            <option value="auto" selected>Auto-detect</option>
+            <option value="floor_plan">Force floor plan</option>
+          </select>
+          <p class="scale-note">Use “Force floor plan” if a blueprint or coloured plan isn’t detected correctly.</p>
         </div>
 
         <div class="panel">
@@ -752,6 +758,7 @@
       formData.append('generate_interiors', document.getElementById('toggleInterior').classList.contains('on'));
       formData.append('complexity', document.getElementById('complexitySelect').value);
       formData.append('scale', document.getElementById('scaleSelect').value);
+      formData.append('mode', document.getElementById('modeSelect').value);
 
       const progressFill = document.getElementById('progressFill');
       const progressStatus = document.getElementById('progressStatus');

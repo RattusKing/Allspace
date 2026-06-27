@@ -41,9 +41,11 @@ The converter works best with:
 ## 🎯 Tips for Best Results
 
 1. **Drawing Quality**
-   - Dark walls on a clean, light/white background work best
-   - High-contrast, crisp line work
-   - Remove or minimize furniture, text, and dimension lines if you can — they can be mistaken for walls
+   - Clear walls with good contrast work best. Blueprints (light walls on a dark
+     ground) and grey/low-contrast walls are now handled automatically.
+   - Remove or minimize furniture, text, and dimension lines if you can — most are
+     filtered out, but heavy annotation can still leak into the walls
+   - If your plan isn't detected correctly, set **Input type → Force floor plan**
 
 2. **Scale**
    - Leave scale on `auto` for a normalized footprint, or supply a numeric scale ratio for floor plans to get approximate real-world dimensions (assumes 96 DPI)

@@ -181,9 +181,15 @@ def generate_combined():
             'wall_thickness': 0.3,
             'generate_interiors': request.form.get('generate_interiors', 'true').lower() == 'true',
             'floor_plan_scale': request.form.get('scale', 'auto'),
+            'mode': request.form.get('mode', 'auto'),
         }
 
-        depth_map, confidence_map, scene_type = depth_estimator.estimate_depth(filepath)
+        # 'mode' lets the user force the floor-plan path when auto-detection
+        # misroutes an unusual drawing style (blueprint, coloured plan, etc.).
+        force_scene_type = 'floor_plan' if options['mode'] == 'floor_plan' else None
+        depth_map, confidence_map, scene_type = depth_estimator.estimate_depth(
+            filepath, force_scene_type=force_scene_type
+        )
 
         from PIL import Image as _PIL_Image
         with _PIL_Image.open(filepath) as _pil_im:

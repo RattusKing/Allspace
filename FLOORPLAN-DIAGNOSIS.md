@@ -16,8 +16,15 @@ actually is**, which differs significantly from what the other docs claim._
   real OBJ export. The `complexity`/`interiors` UI controls are now wired up.
   _Note: the GLB up-axis was investigated and found to be **correct** (exported Y-up
   with an identity transform) — that hypothesis from §"Bucket A" did not reproduce._
-- ⏳ **Phase 3 — Wall-detection rebuild**: not yet done; this is the remaining accuracy
-  ceiling (single-threshold mask, blob-outline extrusion, brightness-based openings).
+- ✅ **Phase 3 — Wall-detection robustness rebuilt**: `_floorplan_depth` now
+  normalizes polarity (blueprints / dark-theme exports), thresholds adaptively with
+  Otsu (grey / low-contrast walls), and keeps the connected wall network to drop
+  text/furniture. A `mode=floor_plan` override lets users force the path when
+  auto-detection misroutes. Measured on a synthetic style matrix, blueprint wall-mask
+  IoU went 0.00 → 0.88 and noisy 0.71 → 0.80, with classic/grey/coloured holding 0.88.
+  _Still open (true vectorization): walls are traced as blob outlines rather than
+  centerlines, openings are inferred from pixel brightness, and automatic metric scale
+  needs a detected scale bar/DPI rather than the 96 DPI assumption._
 
 The analysis below documents the original state; line numbers refer to it.
 
