@@ -1,45 +1,25 @@
 # 📸 Example Images and Results
 
-This document shows example images you can use to test the Image to 3D Environment Generator and what to expect.
+This document shows example images you can use to test Allspace (Floor Plan to 3D Model Converter) and what to expect.
 
 ## 🧪 Test Images
 
 ### Best Results
 
-The generator works best with:
+The converter works best with:
 
-1. **Architectural Photos**
-   - Building facades
-   - Room interiors
-   - Factory floors
-   - Hallways and corridors
-
-2. **Street Views**
-   - Urban scenes with buildings
-   - Alleyways
-   - Store fronts
-
-3. **Landscape Photos**
-   - Photos with clear depth perspective
-   - Mountain scenes
-   - Forest paths
+1. **Floor Plans**
+   - Dark walls on a clean, light/white background
+   - Clear, high-contrast line work
+   - Standard architectural drawing style near a single scale/DPI
 
 ### Example Workflow
 
-1. **Input**: Photo of a factory floor
-   - The AI estimates depth from visible elements
-   - Generates back walls and ceiling
-   - Adds procedural catwalks and industrial elements
-
-2. **Input**: Interior room photo
-   - Depth map shows furniture and walls
-   - Generates floor and ceiling
-   - Adds procedural furniture in hallucinated areas
-
-3. **Input**: Building facade
-   - Front face reconstructed from photo
-   - Back walls and interior spaces generated
-   - Structural elements like pillars added
+1. **Input**: A floor plan image (dark walls on a light background)
+   - Classical OpenCV thresholds the dark pixels into a binary wall mask
+   - The wall mask is traced and its edges are extruded into vertical 3D walls
+   - Door/window openings are detected and per-room floor tiles are added
+   - The result is exported as a GLB you can preview and download
 
 ## 📊 Expected Results
 
@@ -52,72 +32,54 @@ The generator works best with:
 
 **GLB File**
 - Size: 1-5 MB typically
-- Vertex count: 10,000-100,000 depending on complexity
-- Optimized for web viewers and Three.js
+- Optimized for web viewers (Google `<model-viewer>`) and other glTF-compatible tools
 
-**FBX File**
-- Size: 2-8 MB typically
-- Compatible with Unity, Unreal, Blender
-- Includes vertex colors
+**OBJ File**
+- Plain-text OBJ with per-vertex colors, for Blender, Unity, and Unreal
+- (Note: there is no FBX export — trimesh cannot author FBX. OBJ imports into the same tools.)
 
 ## 🎯 Tips for Best Results
 
-1. **Image Quality**
-   - Use high-resolution images (1024x1024 or higher)
-   - Ensure good lighting
-   - Avoid motion blur
+1. **Drawing Quality**
+   - Clear walls with good contrast work best. Blueprints (light walls on a dark
+     ground) and grey/low-contrast walls are now handled automatically.
+   - Remove or minimize furniture, text, and dimension lines if you can — most are
+     filtered out, but heavy annotation can still leak into the walls
+   - If your plan isn't detected correctly, set **Input type → Force floor plan**
 
-2. **Perspective**
-   - Images with clear perspective work best
-   - Frontal views are ideal
-   - Avoid extreme wide-angle or fisheye lenses
+2. **Scale**
+   - Leave scale on `auto` for a normalized footprint, or supply a numeric scale ratio for floor plans to get approximate real-world dimensions (assumes 96 DPI)
 
-3. **Complexity Settings**
-   - **Low**: Faster, basic geometry
-   - **Medium**: Balanced speed and detail
-   - **High**: More procedural elements, slower
-
-4. **Scene Types**
-   - **Interior**: Generates rooms and furniture
-   - **Factory**: Adds industrial elements
-   - **Building**: Structural elements like pillars
+3. **Resolution**
+   - Inputs are processed at up to ~1024px internally; extremely thin CAD lines survive better in a clean, bold plan. Use the **High** complexity option to keep the most wall detail.
 
 ## 🖼️ Sample Images to Try
 
 You can test with:
-- Photos from your phone
-- Free stock photos from Unsplash
-- Google Street View screenshots
-- Game concept art
-- Architectural drawings
+- Architectural floor plans
+- Simple hand-drawn or CAD-style room layouts (dark walls, light background)
 
 ## ⚠️ Limitations
 
 **May Not Work Well With:**
-- Abstract art (no clear depth)
-- Completely flat images
-- Very dark or overexposed photos
-- Images with text only
-- Close-up photos without background
+- Blueprints (light lines on a dark background)
+- Colored / real-estate-style plans (can misclassify as a photo)
+- Gray-filled or very thin walls
+- Photographed plans with uneven lighting
+- Plans dense with furniture, text, or dimension lines
 
-**But Feel Free to Experiment!**
-Sometimes unexpected inputs create interesting results.
+See `FLOORPLAN-DIAGNOSIS.md` for full details on these limits.
 
-## 🎨 Creative Uses
+## 🎨 Uses
 
-**Game Development**
+**Architecture / Real Estate**
 ```
-Concept Art → 3D Environment → Unity/Unreal
-```
-
-**Architecture**
-```
-Floor Plan → 3D Visualization → Client Review
+Floor Plan → 3D Model → Client Review
 ```
 
-**Virtual Tours**
+**Import into other tools**
 ```
-Photos → 3D Model → Web Viewer
+Floor Plan → GLB → Blender / Unity / Unreal
 ```
 
 ## 📝 Sharing Results
@@ -137,4 +99,4 @@ We'd love to see what you create! Share your results:
 
 ---
 
-**Remember**: This is an AI-powered tool, and results may vary. The "hallucination" feature is experimental and creative - it's not trying to be architecturally accurate, but rather to create interesting, explorable 3D spaces!
+**Remember**: This is a classical computer-vision tool (OpenCV on the CPU — no AI, no GPU, no model downloads). It works best on clean floor plans with dark walls on a light background, and results vary with drawing style, resolution, and scale. See `FLOORPLAN-DIAGNOSIS.md` for the known accuracy limits.

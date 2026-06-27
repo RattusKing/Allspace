@@ -22,13 +22,16 @@ class DepthEstimator:
         print("   ✅ Fast local processing")
         print("   ✅ Memory-optimized (<100MB)")
 
-    def estimate_depth(self, image_path):
+    def estimate_depth(self, image_path, force_scene_type=None):
         """
         Estimate depth map by analyzing image content
         Creates clean, scene-aware depth for professional 3D appearance
 
         Args:
             image_path: Path to input image
+            force_scene_type: optional scene type to use instead of auto-detection
+                (e.g. "floor_plan"). Auto-detection is brittle on unusual drawing
+                styles, so the UI can force the floor-plan path when it misroutes.
 
         Returns:
             depth_map: Normalized depth map (numpy array, 0=far, 1=close)
@@ -42,8 +45,12 @@ class DepthEstimator:
             if img is None:
                 raise ValueError(f"Could not load image: {image_path}")
 
-            # Keep good quality for clean appearance
-            max_dim = 640
+            # Keep good quality for clean appearance.
+            # 1024 (was 640): thin CAD wall lines are ~1-2px in the source and
+            # become sub-pixel — i.e. disappear — when shrunk to 640 before wall
+            # detection runs. 1024 preserves them while staying memory-light
+            # (binary morphology on 1024px is still well under the 512MB budget).
+            max_dim = 1024
             height, width = img.shape[:2]
             if max(height, width) > max_dim:
                 scale = max_dim / max(height, width)
@@ -56,9 +63,16 @@ class DepthEstimator:
             img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-            # Detect scene type and use appropriate depth strategy
-            scene_type = self._detect_scene_type(img_gray, img_rgb, height, width)
-            print(f"   🔍 Detected scene type: {scene_type}")
+            # Detect scene type and use appropriate depth strategy.
+            # A caller-supplied override wins over auto-detection.
+            valid_types = {"floor_plan", "building_facade", "indoor_room",
+                           "outdoor_landscape", "portrait", "general"}
+            if force_scene_type in valid_types:
+                scene_type = force_scene_type
+                print(f"   🔒 Scene type forced: {scene_type}")
+            else:
+                scene_type = self._detect_scene_type(img_gray, img_rgb, height, width)
+                print(f"   🔍 Detected scene type: {scene_type}")
 
             # Compute edge map once (shared across scene types)
             edges = cv2.Canny(img_gray, 50, 150)
@@ -270,74 +284,92 @@ class DepthEstimator:
 
     def _floorplan_depth(self, img_gray, height, width):
         """
-        Phase 1: Clean binary wall mask for architectural floor plan drawings.
+        Build a clean binary wall mask for architectural floor-plan drawings.
 
-        Grayscale value ranges for typical CAD floor plans:
-          Dark navy/black walls  →   0 – 80   (kept)
-          Cyan/blue annotations  → 140 – 200  (excluded by threshold)
-          White paper            → 220 – 255  (excluded by threshold)
+        Robust to drawing STYLE (the previous version assumed dark walls on a
+        white page near one DPI and silently failed on anything else):
 
-        Pipeline:
-          1. Threshold at 100  → captures walls + text, excludes cyan/light ink
-          2. Two-stage close   → first fills line-width gaps, then fills the
-                                 white body between parallel wall face lines
-          3. Open (erode+dilate) pass to destroy tiny isolated blobs (text) that
-             didn't grow large enough during closing
-          4. Connected-component area filter as final guard
+          • Polarity — light-on-dark blueprints and dark-theme CAD exports are
+            detected from the page border and inverted, so walls are always
+            treated as dark ink on a light ground.
+          • Ink darkness / contrast — an Otsu threshold adapts to the actual
+            paper/ink levels instead of a fixed cut at 120, so medium-grey or
+            low-contrast walls are still captured (a fixed cut dropped them).
+          • Annotations — text, dimensions and furniture are removed by keeping
+            the connected wall NETWORK (largest component + other substantial
+            structures) and discarding small isolated symbols.
+
+        Wall pixels are set to 1.0, everything else 0.0.
         """
         min_dim = min(height, width)
 
-        # ── Step 1: Find dark structural pixels ──────────────────────────────
-        # 120 catches dark navy/black walls (grayscale 0-80) and JPEG-bloomed
-        # edge pixels (80-120) without picking up cyan annotations (~150+).
-        _, dark = cv2.threshold(img_gray, 120, 255, cv2.THRESH_BINARY_INV)
+        # ── Step 0: Normalize polarity (walls = dark ink on a light ground) ──
+        # The page border is almost always background, so its mean brightness
+        # tells us whether the drawing is inverted (blueprint / dark theme).
+        fr = max(1, min_dim // 40)
+        border = np.concatenate([
+            img_gray[:fr, :].ravel(),  img_gray[-fr:, :].ravel(),
+            img_gray[:, :fr].ravel(),  img_gray[:, -fr:].ravel(),
+        ])
+        bg_is_dark = float(np.mean(border)) < 110
+        work = (255 - img_gray) if bg_is_dark else img_gray
+        if bg_is_dark:
+            print("  🔄 Inverted / blueprint drawing detected — normalizing polarity")
+
+        # ── Step 1: Adaptive ink threshold (Otsu) ───────────────────────────
+        # Otsu separates paper from ink automatically. Guard the degenerate
+        # near-uniform case (almost no ink) with a fixed fallback cut.
+        otsu_t, dark = cv2.threshold(
+            work, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU
+        )
+        if otsu_t > 205:
+            _, dark = cv2.threshold(work, 160, 255, cv2.THRESH_BINARY_INV)
         # Remove single-pixel speckles
         dark = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
 
-        # ── Step 2: Two-stage morphological close ─────────────────────────────
-        # Stage A – small close: fuses stroke pixel gaps caused by JPEG artifacts
-        ck1 = max(3, min_dim // 80)              # ~4 px at 350 px
+        # ── Step 2: Two-stage morphological close ───────────────────────────
+        # Stage A – small close: fuses stroke pixel gaps from JPEG artifacts.
+        ck1 = max(3, min_dim // 80)
         stage_a = cv2.morphologyEx(
             dark, cv2.MORPH_CLOSE, np.ones((ck1, ck1), np.uint8)
         )
         del dark
-
-        # Stage B – larger close: bridges the white body gap between the two
-        # parallel face lines that CAD drawings use to represent wall thickness.
-        # Walls at 1:100 on a 96 Dpi scan leave a 4-14 px gap at 640 px.
-        ck2 = max(7, min_dim // 35)              # ~10 px at 350 px, ~18 px at 640 px
+        # Stage B – larger close: bridges the white body between the two
+        # parallel face lines CAD drawings use to show wall thickness.
+        ck2 = max(7, min_dim // 35)
         stage_b = cv2.morphologyEx(
             stage_a, cv2.MORPH_CLOSE,
             np.ones((ck2, ck2), np.uint8), iterations=2
         )
         del stage_a
 
-        # NOTE: No open/erode pass here.  The open pass in the previous version
-        # destroyed single-line walls (2-4 px wide) because they don't grow
-        # wide enough for the open kernel to spare them.  Text removal is
-        # handled solely by the area filter below.
-
-        # ── Step 3: Connected-component area filter ───────────────────────────
-        # Single wall lines stay narrow after closing (close fills gaps, not
-        # width).  Multiple nearby lines merge into larger blobs.  Text
-        # characters form small isolated blobs that rarely exceed 0.3 % of the
-        # image area; the 0.3 % floor discards them.
+        # ── Step 3: Keep the connected wall network, drop isolated symbols ──
+        # Walls form one large connected network (envelope + partitions). Text,
+        # dimensions and furniture are small, separate blobs. Keep the largest
+        # component plus any other component that is a meaningful fraction of it
+        # (so detached wing walls survive) and discard the rest.
         n, labels, stats, _ = cv2.connectedComponentsWithStats(stage_b, connectivity=8)
         del stage_b
 
         wall_mask = np.zeros((height, width), dtype=np.uint8)
-        min_area = max(200, int(width * height * 0.003))   # 0.3 % min
-        max_area = int(width * height * 0.45)
+        total = width * height
+        max_area = int(total * 0.60)
+        areas = [(i, int(stats[i, cv2.CC_STAT_AREA])) for i in range(1, n)]
+        largest_area = max((a for _, a in areas), default=0)
+        # A component is wall if it's the dominant network, or large in its own
+        # right (>=15% of the network) and above an absolute text-rejection floor.
+        min_abs = max(200, int(total * 0.004))
+        min_rel = int(largest_area * 0.15)
         kept = 0
-        for i in range(1, n):
-            a = int(stats[i, cv2.CC_STAT_AREA])
-            if min_area <= a <= max_area:
+        for i, a in areas:
+            if a > max_area:
+                continue
+            if a == largest_area or a >= max(min_abs, min_rel):
                 wall_mask[labels == i] = 255
                 kept += 1
         del labels, stats
 
-        # Light dilation to give thin surviving wall lines a few extra pixels
-        # of body so contour extrusion in the mesh generator sees solid quads.
+        # Light dilation so very thin surviving wall lines have body for extrusion
         wall_mask = cv2.dilate(wall_mask, np.ones((3, 3), np.uint8), iterations=1)
 
         depth = np.zeros((height, width), dtype=np.float32)
@@ -345,7 +377,7 @@ class DepthEstimator:
         del wall_mask
 
         wall_pct = float(np.mean(depth > 0)) * 100
-        print(f"  🏗️  Floor plan: {n - 1} dark components → "
+        print(f"  🏗️  Floor plan: {n - 1} components → "
               f"{kept} wall blobs, {wall_pct:.1f}% wall coverage")
 
         return depth

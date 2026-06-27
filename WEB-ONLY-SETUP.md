@@ -50,14 +50,7 @@ https://image-to-3d-api-xxxx.onrender.com
 
 ### 1.6 Test It Works
 1. Click on your URL or paste it in a new tab
-2. You should see JSON that starts with:
-```json
-{
-  "status": "online",
-  "service": "Image to 3D Environment Generator",
-  ...
-}
-```
+2. You should see the Allspace web interface — Flask serves `index.html` at `/`
 
 ✅ **Backend is live!**
 
@@ -146,10 +139,10 @@ https://rattusking.github.io/Allspace/frontend/index.html
 ### 4.2 Try It Out!
 1. You should see the beautiful dark interface
 2. Drag and drop an image (or click browse)
-3. Click **"Generate 3D Environment"**
+3. Click **"Generate 3D model"**
 4. Wait 30-90 seconds (first time may take longer)
 5. See your 3D model!
-6. Download as GLB or FBX
+6. Download as GLB or OBJ
 
 ### 4.3 Share Your Link!
 Your working application is now live at:
@@ -164,7 +157,7 @@ Share it with friends, on social media, in your portfolio!
 ## 🎯 What You Just Created
 
 ✅ A fully working web application
-✅ AI-powered image to 3D conversion
+✅ Floor-plan to 3D conversion using classical OpenCV computer vision (no AI, no GPU)
 ✅ Hosted completely free
 ✅ No terminal/command line used at all
 ✅ Professional and open-source
@@ -196,11 +189,11 @@ Share it with friends, on social media, in your portfolio!
    - `https://rattusking.github.io/Allspace/frontend/`
    - `https://rattusking.github.io/Allspace/frontend/index.html`
 
-### Problem: First generation takes forever
+### Problem: First request takes a while after idle
 
-**Cause**: AI model downloading (one-time, ~100MB)
+**Cause**: On Render's free tier the backend sleeps after ~15 min of inactivity and has to wake up. There is no AI model and no model download — generation is pure CPU OpenCV.
 
-**Fix**: Just wait! After the first generation, it'll be fast (30-90 sec)
+**Fix**: Just wait a few seconds for it to wake; subsequent requests are immediate.
 
 ### View Render Logs (if needed)
 1. Go to Render dashboard

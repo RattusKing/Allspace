@@ -568,6 +568,12 @@
             <option value="medium" selected>Medium</option>
             <option value="high">High — more detail</option>
           </select>
+          <label class="field-label" for="modeSelect">Input type</label>
+          <select id="modeSelect">
+            <option value="auto" selected>Auto-detect</option>
+            <option value="floor_plan">Force floor plan</option>
+          </select>
+          <p class="scale-note">Use “Force floor plan” if a blueprint or coloured plan isn’t detected correctly.</p>
         </div>
 
         <div class="panel">
@@ -609,7 +615,17 @@
           <span class="viewer-title">3D Preview</span>
           <span class="viewer-hint">Drag to rotate · Scroll to zoom · Pinch to zoom on mobile</span>
         </div>
-        <model-viewer id="modelViewer" camera-controls shadow-intensity="0.5" tone-mapping="neutral"></model-viewer>
+        <model-viewer id="modelViewer"
+                      camera-controls
+                      camera-orbit="45deg 58deg auto"
+                      camera-target="auto"
+                      field-of-view="auto"
+                      max-camera-orbit="auto 89deg auto"
+                      interaction-prompt="none"
+                      environment-image="neutral"
+                      exposure="1.05"
+                      shadow-intensity="0.6"
+                      tone-mapping="neutral"></model-viewer>
         <div class="download-row">
           <button class="download-btn" id="downloadGLB">
             <div class="download-icon">
@@ -620,12 +636,12 @@
               <div class="download-desc">For web viewers, Three.js</div>
             </div>
           </button>
-          <button class="download-btn" id="downloadFBX">
+          <button class="download-btn" id="downloadOBJ">
             <div class="download-icon">
               <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             </div>
             <div class="download-info">
-              <div class="download-format">Download FBX</div>
+              <div class="download-format">Download OBJ</div>
               <div class="download-desc">Unity, Unreal Engine, Blender</div>
             </div>
           </button>
@@ -742,6 +758,7 @@
       formData.append('generate_interiors', document.getElementById('toggleInterior').classList.contains('on'));
       formData.append('complexity', document.getElementById('complexitySelect').value);
       formData.append('scale', document.getElementById('scaleSelect').value);
+      formData.append('mode', document.getElementById('modeSelect').value);
 
       const progressFill = document.getElementById('progressFill');
       const progressStatus = document.getElementById('progressStatus');
@@ -774,7 +791,7 @@
             document.getElementById('processingSection').style.display = 'none';
             document.getElementById('resultSection').style.display = 'block';
             document.getElementById('downloadGLB').onclick = () => window.location.href = data.glb_url;
-            document.getElementById('downloadFBX').onclick = () => window.location.href = data.fbx_url;
+            document.getElementById('downloadOBJ').onclick = () => window.location.href = data.obj_url;
             initViewer(data);
           }, 400);
         })
@@ -787,8 +804,20 @@
         });
     }
 
+    // Named handlers so repeated initViewer() calls don't stack listeners
+    // (addEventListener de-dupes identical function references).
+    function onViewerError() {
+      document.getElementById('resultSection').style.display = 'none';
+      document.getElementById('errorSection').style.display = 'block';
+      document.getElementById('errorMsg').textContent =
+        'The 3D model was generated but could not be loaded in the viewer. ' +
+        'Try downloading the GLB or OBJ file directly.';
+      generateBtn.disabled = false;
+    }
+
     function initViewer(data) {
       const viewer = document.getElementById('modelViewer');
+      viewer.addEventListener('error', onViewerError);
       if (data && data.model_url) {
         // Force HTTPS — Render's reverse proxy may produce http:// URLs
         viewer.src = data.model_url.replace(/^http:\/\//, 'https://');

@@ -1,6 +1,6 @@
 # ⚡ Quick Start - GitHub Pages Deployment
 
-Get your Image to 3D Generator live in 10 minutes!
+Get Allspace (Floor Plan to 3D Model Converter) live in 10 minutes!
 
 ## What You're Deploying
 
@@ -43,14 +43,7 @@ https://image-to-3d-api-xxxx.onrender.com
 
 ### 1.4 Test Backend
 
-Visit your URL in a browser. You should see:
-```json
-{
-  "status": "online",
-  "service": "Image to 3D Environment Generator",
-  ...
-}
-```
+Visit your URL in a browser. You should see the Allspace web interface — Flask serves `index.html` at `/`.
 
 ✅ Backend is live!
 
@@ -101,10 +94,10 @@ https://rattusking.github.io/Allspace/frontend/
 
 1. Visit the URL above
 2. Drag and drop an image (or use the browse button)
-3. Click "Generate 3D Environment"
+3. Click "Generate 3D model"
 4. Wait 30-90 seconds
 5. See your 3D model in the preview!
-6. Download as GLB or FBX
+6. Download as GLB or OBJ
 
 ## Troubleshooting
 
@@ -123,13 +116,13 @@ https://rattusking.github.io/Allspace/frontend/
   3. Try: `https://rattusking.github.io/Allspace/frontend/`
   4. Check Settings → Pages for the exact URL
 
-### First generation takes forever
-- **Cause**: Render downloads AI model on first use
-- **Fix**: Just wait, it's a one-time download (~100MB)
+### First request takes a while after idle
+- **Cause**: On Render's free tier the backend sleeps after ~15 min of inactivity and has to wake up. There is no AI model and no model download — generation is pure CPU OpenCV.
+- **Fix**: Just wait a few seconds for it to wake; subsequent requests are immediate.
 
 ### Backend returns 500 error
-- **Cause**: Model download failed or out of memory
-- **Fix**: Check Render logs, may need to upgrade from free tier
+- **Cause**: An unsupported or misclassified image (e.g. a colored plan handled as a photo), or low memory on a very large image.
+- **Fix**: Use a clean floor plan with dark walls on a light background; try a smaller image. Check Render logs for details.
 
 ## Sharing Your Project
 

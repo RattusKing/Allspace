@@ -1,28 +1,27 @@
-# 🎨 Image to 3D Environment Generator
+# 🏠 Allspace — Floor Plan to 3D Model Converter
 
-Transform any 2D image into a complete, explorable 3D environment with AI-powered depth estimation and procedural generation of unseen areas.
+Turn a 2D floor plan image into a 3D architectural model using classical computer vision — no AI, no GPU, no model downloads. Upload a plan, get walls extruded into real 3D geometry, preview it in your browser, and export to GLB.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Flask](https://img.shields.io/badge/flask-3.0.0-green.svg)](https://flask.palletsprojects.com/)
+[![Flask](https://img.shields.io/badge/flask-2.3+-green.svg)](https://flask.palletsprojects.com/)
 
 ## ✨ Features
 
-- 🖼️ **Universal Image Support** - Upload any 2D image: photos, maps, concept art, architectural drawings
-- 🤖 **AI Depth Estimation** - Uses MiDaS for accurate monocular depth estimation
-- 🎭 **Unseen Area Hallucination** - Procedurally generates rooms, interiors, and structures behind walls
-- 📦 **Multiple Export Formats** - Export as GLB and FBX for Unity, Unreal Engine, and Blender
-- 🌐 **3D Preview** - Interactive Three.js viewer directly in your browser
+- 🏗️ **Floor Plan → 3D** - Upload a 2D floor plan and get a 3D model with extruded walls, per-room floors, and detected door/window openings
+- 🧮 **Classical Computer Vision** - Pure OpenCV image processing on the CPU. No neural networks, no MiDaS, no PyTorch, no GPU required
+- 📦 **GLB + OBJ Export** - Download a GLB (glTF Binary) model for web viewers, or an OBJ for Unity, Unreal Engine, and Blender
+- 🌐 **In-Browser 3D Preview** - Interactive preview using Google's `<model-viewer>` web component
+- ⚡ **Lightweight** - Small dependency footprint; the server starts in seconds and runs comfortably on free-tier hosts
 - 🆓 **Completely Free** - No accounts, no API keys, no paid tiers
 - 🔓 **Open Source** - MIT licensed, fork and modify as you wish
 
 ## 🎯 Use Cases
 
-- **Game Development** - Generate 3D environments from concept art
-- **Architecture** - Visualize 2D floor plans in 3D
-- **Virtual Tours** - Create explorable spaces from photographs
-- **Education** - Learn about depth estimation and 3D reconstruction
-- **Creative Projects** - Transform art into interactive 3D scenes
+- **Architecture & Real Estate** - Visualize 2D floor plans as 3D models
+- **Education** - Learn about classical computer-vision pipelines and 3D mesh generation
+- **Prototyping** - Quickly turn a sketch or CAD-style plan into editable geometry
+- **Creative Projects** - Bring drawn layouts into a 3D scene
 
 ## 🚀 Quick Start
 
@@ -30,18 +29,16 @@ Transform any 2D image into a complete, explorable 3D environment with AI-powere
 
 - Python 3.8 or higher
 - pip (Python package manager)
-- 4GB+ RAM (8GB+ recommended for larger images)
-- MacBook Air or better (tested on M1/M2 Macs)
 
 ### Local Development Setup
 
 1. **Clone the repository**
 ```bash
 git clone https://github.com/RattusKing/Allspace.git
-cd image-to-3d-generator
+cd Allspace
 ```
 
-2. **Set up Python virtual environment**
+2. **Set up a Python virtual environment**
 ```bash
 cd backend
 python3 -m venv venv
@@ -58,52 +55,42 @@ pip install -r requirements.txt
 python app.py
 ```
 
-The API will be available at `http://localhost:5000`
-
-5. **Serve the frontend** (in a new terminal)
-```bash
-cd frontend
-python3 -m http.server 8000
-```
-
-The web interface will be available at `http://localhost:8000`
+The app will be available at `http://localhost:5000`. The Flask backend serves the frontend (`index.html`) directly at `/`, so there is no separate frontend server to run.
 
 ### First Generation
 
-1. Open your browser to `http://localhost:8000`
-2. Drag and drop an image or click to browse
-3. Configure generation options:
-   - **Hallucinate unseen areas** - Generate rooms and interiors
-   - **Interior elements** - Add furniture, machinery, etc.
-   - **Complexity** - Low (faster) to High (more detail)
-   - **Wall thickness** - Adjust wall depth (0.1-1.0 meters)
-4. Click "Generate 3D Environment"
-5. Wait for processing (typically 30-90 seconds)
-6. Preview your 3D model in the interactive viewer
-7. Download as GLB or FBX
+1. Open your browser to `http://localhost:5000`
+2. Drag and drop a floor plan image or click to browse
+3. Adjust the available options (scale, etc.)
+4. Click to generate the 3D model
+5. Preview your model in the interactive viewer
+6. Download the GLB or OBJ file
+
+> Options: **Room complexity** controls the working resolution and how finely walls
+> are traced (low = faster/coarser, high = more detail). **Interior elements** toggles
+> per-room colour-coded floors. **Scale** sets real-world metre dimensions on the
+> exported model (assumes a 96 DPI scan).
 
 ## 📁 Project Structure
 
 ```
-image-to-3d-generator/
+Allspace/
+├── index.html                      # Web interface (served by Flask at /)
 ├── backend/
-│   ├── app.py                      # Flask API server
+│   ├── app.py                      # Flask API server + pipeline orchestration
 │   ├── requirements.txt            # Python dependencies
+│   ├── gunicorn_config.py          # Gunicorn production config
+│   ├── test_setup.py               # Setup/sanity check script
 │   ├── models/
 │   │   ├── __init__.py
-│   │   └── depth_estimator.py      # MiDaS depth estimation
+│   │   └── depth_estimator.py      # Classical-CV scene classification + wall mask
 │   ├── utils/
 │   │   ├── __init__.py
-│   │   ├── mesh_generator.py       # 3D mesh creation
-│   │   ├── procedural_generator.py # Unseen area hallucination
-│   │   └── exporter.py             # GLB/FBX export
+│   │   ├── mesh_generator.py       # 3D mesh creation (wall extrusion, floors)
+│   │   └── exporter.py             # GLB + OBJ export
 │   ├── uploads/                    # Temporary image storage
 │   └── outputs/                    # Generated 3D models
-├── frontend/
-│   ├── index.html                  # Web interface
-│   ├── style.css                   # Styling
-│   ├── app.js                      # Application logic
-│   └── viewer.js                   # Three.js 3D viewer
+├── render.yaml                     # Render deployment blueprint
 ├── .gitignore
 ├── LICENSE                         # MIT License
 └── README.md
@@ -111,47 +98,30 @@ image-to-3d-generator/
 
 ## 🔧 How It Works
 
-### 1. Depth Estimation
-- Uses Intel's MiDaS model for monocular depth estimation
-- Generates a depth map from the input image
-- Calculates confidence scores for each pixel
+The whole pipeline is hand-written classical computer vision built on OpenCV, NumPy, SciPy, and trimesh. There is **no machine-learning model** anywhere in it.
 
-### 2. Base Mesh Generation
-- Converts depth map to 3D point cloud
-- Applies Poisson surface reconstruction or ball pivoting
-- Maps original image colors to vertices
+### 1. Scene Classification
+- `depth_estimator.py` (`_detect_scene_type`) heuristically classifies the uploaded image — floor plan, building facade, indoor room, or generic photo — using brightness, color saturation, and Hough line counts.
 
-### 3. Procedural Hallucination
-- Analyzes scene type (interior, exterior, factory, etc.)
-- Generates back walls, side walls, floors, and ceilings
-- Adds interior elements based on scene type:
-  - **Factories** - Catwalks, pipes, machinery
-  - **Interiors** - Furniture, fixtures
-  - **Buildings** - Structural elements, pillars
+### 2. Wall Mask (floor plan path)
+- For floor plans, `_floorplan_depth` builds a binary wall mask: the image is resized so the longest side is ~1024px, dark pixels are thresholded (`gray < 120`), morphological closing fills gaps, and connected components are filtered by area. Wall pixels = `1.0`, floor = `0.0`. No depth network is involved.
+
+### 3. Mesh Generation
+- `mesh_generator._architectural_mesh` traces the wall mask with `findContours`, simplifies the outlines with `approxPolyDP`, and extrudes each edge into vertical wall quads. It detects door/window openings and builds per-room floor tiles to produce 3D architectural geometry.
 
 ### 4. Export
-- Converts to trimesh format
-- Exports to GLB (glTF Binary) for web use
-- Exports to FBX for game engines and 3D software
+- `exporter.py` writes the mesh to GLB (glTF Binary) for the in-browser viewer and downloads, and to OBJ for desktop 3D tools and game engines.
 
-## 🎮 Import into Game Engines
-
-### Unity
-1. Download the FBX file
-2. Drag into Unity's Assets folder
-3. The model will be automatically imported with materials
-
-### Unreal Engine
-1. Download the FBX file
-2. In Content Browser, click Import
-3. Select the FBX file and configure import settings
-4. Materials and textures will be imported
+## 🎮 Import into Other Tools
 
 ### Blender
-1. Download either GLB or FBX
-2. File → Import → FBX (or glTF 2.0)
+1. Download the GLB file
+2. File → Import → glTF 2.0
 3. Select your downloaded file
-4. Model appears in the scene
+4. The model appears in the scene
+
+### Unity / Unreal Engine
+Import the OBJ directly, or use GLB / glTF (Unity via the glTF importer / UnityGLTF; Unreal via the glTF importer or Datasmith). Drag the file into your project's assets and configure import as needed.
 
 ## ☁️ Deployment
 
@@ -160,89 +130,63 @@ image-to-3d-generator/
 1. **Create a Render account** at [render.com](https://render.com)
 
 2. **Create a new Web Service**
-   - Connect your GitHub repository
+   - Connect your GitHub repository (`Allspace`)
    - Select `backend` as the root directory
    - Build Command: `pip install -r requirements.txt`
-   - Start Command: `gunicorn app:app`
+   - Start Command: `gunicorn --bind 0.0.0.0:$PORT app:app`
 
-3. **Add environment variables** (if needed)
+3. **Deploy** - Render will build and deploy automatically. The app is lightweight (no PyTorch, no model downloads), so builds and cold starts are fast.
 
-4. **Deploy** - Render will build and deploy automatically
-
-5. **Update frontend API URL**
-   - Edit `frontend/app.js`
-   - Change `API_URL` to your Render URL
-
-### Frontend - GitHub Pages
-
-1. **Enable GitHub Pages**
-   - Go to repository Settings → Pages
-   - Source: Deploy from a branch
-   - Branch: main, folder: /frontend
-   - Save
-
-2. **Access your site**
-   - Your site will be available at: `https://yourusername.github.io/image-to-3d-generator/`
-
-3. **Configure CORS**
-   - Ensure your Render backend allows requests from your GitHub Pages domain
+Because Flask serves `index.html` at `/`, deploying the backend deploys the whole app — frontend included. Open the Render service URL directly to use it.
 
 ## 🛠️ API Endpoints
 
 ### `GET /`
-Health check and API information
+Serves the web interface (`index.html`).
 
-### `POST /api/upload`
-Upload an image for processing
-- **Body**: multipart/form-data with `image` file
-- **Returns**: `job_id` for tracking
+### `POST /generate`
+Run the full pipeline and generate a 3D model.
+- **Body**: `multipart/form-data` with:
+  - `image` — the floor plan image file (required)
+  - `complexity` — `low` | `medium` (default) | `high`; sets working resolution and contour detail
+  - `generate_interiors` — `true` (default) | `false`; toggles per-room colour-coded floors
+  - `scale` — `auto` (default) or a numeric scale ratio used to compute real-world dimensions for floor plans
+  - `mode` — `auto` (default) or `floor_plan` to force the floor-plan path when auto-detection misroutes an unusual drawing
+- **Returns**: JSON with `job_id` and absolute download URLs (`model_url` / `glb_url` / `obj_url`)
 
-### `POST /api/generate`
-Start 3D generation
-- **Body**: JSON with `job_id` and options
-- **Returns**: Generation status
-
-### `GET /api/status/:job_id`
-Check generation status
-- **Returns**: Progress, status, and output files
-
-### `GET /api/download/:job_id/:format`
-Download generated model
-- **format**: `glb` or `fbx`
-- **Returns**: 3D model file
+### `GET /api/download/<job_id>/<format>`
+Download a generated model.
+- **format**: `glb` or `obj`
+- **Returns**: the 3D model file
 
 ## 🧪 Testing
 
 ```bash
-# Run backend tests
+# Sanity-check the backend setup
 cd backend
-pytest
+python test_setup.py
 
-# Test API endpoints
+# Hit the running server
 curl http://localhost:5000/
 ```
 
 ## 🐛 Troubleshooting
 
-### "Model download failed"
-- **Cause**: First run downloads MiDaS models (~100MB)
-- **Solution**: Wait for download to complete, check internet connection
+### "Generation failed" / 500 error
+- **Cause**: Unsupported or unexpected image, or an image that misclassifies (e.g. a colored/blue plan handled as a photo).
+- **Solution**: Use a clean floor plan with dark walls on a light background. See `FLOORPLAN-DIAGNOSIS.md` for the known accuracy limits of the wall detector.
 
-### "Generation stuck at 0%"
-- **Cause**: Backend not running or wrong API URL
-- **Solution**: Verify backend is running at the URL specified in `frontend/app.js`
+### "Invalid job_id" on download
+- **Cause**: Jobs are tracked in memory and are lost when the server restarts.
+- **Solution**: Re-run the generation to get a fresh `job_id`, then download.
 
 ### "Out of memory error"
-- **Cause**: Image too large or system RAM insufficient
-- **Solution**: Resize image to max 2000px, close other applications
-
-### "FBX export failed"
-- **Cause**: pyassimp not installed or unavailable
-- **Solution**: Model exports as OBJ instead (fallback), or install pyassimp
+- **Cause**: Very large image.
+- **Solution**: Use a smaller image. (Note: inputs are downscaled to ~1024px internally before processing.)
 
 ### "File cleanup not working"
-- **Cause**: Cleanup thread may fail on some systems
-- **Solution**: Manually delete old files from `uploads/` and `outputs/` folders
+- **Cause**: The background cleanup thread may fail on some systems.
+- **Solution**: Manually delete old files from `backend/uploads/` and `backend/outputs/`.
 
 ## 🤝 Contributing
 
@@ -256,64 +200,45 @@ Contributions are welcome! Here's how you can help:
 
 ### Areas for Contribution
 
-- 🎨 Better procedural generation algorithms
-- 🤖 Support for additional depth estimation models
-- 🎮 Unity/Unreal plugins for direct import
-- 🌐 Multi-language support
-- 📱 Mobile-responsive design improvements
+- 🏗️ More robust wall detection (line/centerline geometry, multiple drawing styles)
+- 📐 Preserve true aspect ratio and scale from drawn dimensions
+- 🚪 Better door/window detection from drawn symbols
+- 🚪 Distinguish non-wall symbols (text, dimensions, furniture) from walls
+- 📦 Real FBX export (needs an external converter — currently GLB + OBJ only)
 - 🧪 More comprehensive test coverage
 - 📚 Documentation improvements
 
+See `FLOORPLAN-DIAGNOSIS.md` for a detailed, file-referenced breakdown of current limitations and a remediation roadmap.
+
 ## 📝 Technical Details
-
-### AI Models
-
-**MiDaS (Monocular Depth Estimation)**
-- Paper: [Towards Robust Monocular Depth Estimation](https://arxiv.org/abs/1907.01341)
-- Model: Intel ISL (Intelligent Systems Lab)
-- Uses: Depth map generation from single images
-- Performance: ~2-5 seconds per image on CPU
 
 ### Libraries
 
-- **Flask** - Web API framework
-- **Open3D** - 3D data processing
-- **trimesh** - Mesh manipulation and export
-- **PyTorch** - Deep learning inference
-- **Three.js** - WebGL 3D visualization
+- **Flask** + **flask-cors** + **Werkzeug** - Web API framework
+- **OpenCV** (`opencv-python-headless`) - Image processing and classical computer vision
+- **NumPy** / **SciPy** - Numerical and image array operations
+- **trimesh** - Mesh construction and GLB export
+- **NetworkX** - Graph utilities used during mesh processing
+- **Pillow** - Image loading
+- **gunicorn** - Production WSGI server
+- **Google `<model-viewer>`** - In-browser 3D preview (loaded in `index.html`)
 
-### Performance
-
-- **Small images (512x512)**: ~30 seconds
-- **Medium images (1024x1024)**: ~60 seconds
-- **Large images (2048x2048)**: ~90 seconds
-
-Times vary based on:
-- Image size
-- Complexity settings
-- System specifications
-- CPU vs GPU availability
+No PyTorch, no MiDaS, no Open3D, no neural networks — the engine is entirely classical CPU computer vision.
 
 ## 📊 Limitations
 
-- Depth estimation works best with images that have clear perspective
-- Flat/abstract art may produce unexpected results (but can be interesting!)
-- Very large images (>4K) may require significant processing time
-- Procedural generation is rule-based, not AI-powered (yet!)
-- FBX export requires additional system libraries on some platforms
+- The wall detector now normalizes polarity (handles blueprints / dark-theme exports) and uses an adaptive Otsu threshold (handles grey / low-contrast walls), and drops most text/furniture by keeping the connected wall network. Very thin (1–2px) walls and heavily annotated or photographed plans can still degrade results — use **Force floor plan** (the `mode` option) if auto-detection misroutes.
+- Walls are traced as blob outlines (not centerlines) with a fixed thickness, which rounds corners and can inflate room sizes.
+- Door/window openings are guessed from pixel brightness, so they can be wrong.
+- True real-world scale is only approximate, and only when a numeric scale is supplied (it assumes 96 DPI).
+- Only GLB and OBJ are exported; there is no real FBX writer (trimesh cannot author FBX).
+- `job_id`s are stored in memory and are lost on server restart.
 
-## 🔮 Future Enhancements
+> Aspect-ratio squashing and the aggressive 640px downscale described in earlier
+> revisions have been fixed: inputs now process at up to ~1024px and the normalized
+> footprint preserves the drawing's true proportions.
 
-- [ ] GPU acceleration for faster processing
-- [ ] Support for Depth Anything and other depth models
-- [ ] AI-powered interior element generation
-- [ ] Texture synthesis for unseen areas
-- [ ] Batch processing multiple images
-- [ ] Progressive web app (PWA) support
-- [ ] Advanced mesh optimization options
-- [ ] Custom procedural generation rules
-- [ ] Real-time preview during generation
-- [ ] Video to 3D environment (frame-by-frame)
+(See `FLOORPLAN-DIAGNOSIS.md` for full details and file:line references.)
 
 ## 📄 License
 
@@ -329,9 +254,9 @@ The only requirement is to include the original copyright notice.
 
 ## 🙏 Acknowledgments
 
-- **Intel ISL** - For the MiDaS depth estimation model
-- **Open3D** - For excellent 3D processing capabilities
-- **Three.js** - For making WebGL accessible
+- **OpenCV** - For the computer-vision toolkit this is built on
+- **trimesh** - For mesh construction and glTF/GLB export
+- **Google `<model-viewer>`** - For making in-browser 3D preview easy
 - **Flask** - For a fantastic web framework
 - **The open-source community** - For making projects like this possible
 
@@ -339,7 +264,6 @@ The only requirement is to include the original copyright notice.
 
 - 🐛 **Issues**: [GitHub Issues](https://github.com/RattusKing/Allspace/issues)
 - 💬 **Discussions**: [GitHub Discussions](https://github.com/RattusKing/Allspace/discussions)
-- 📖 **Wiki**: [Project Wiki](https://github.com/RattusKing/Allspace/wiki)
 
 ## ⭐ Star History
 
@@ -349,4 +273,4 @@ If you find this project useful, please consider giving it a star! It helps othe
 
 **Made with ❤️ by the open-source community**
 
-*No accounts, no paywalls, no tracking - just free, open-source 3D generation for everyone.*
+*No accounts, no paywalls, no tracking - just free, open-source floor-plan-to-3D conversion for everyone.*
