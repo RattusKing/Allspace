@@ -1,6 +1,6 @@
 # 🚀 Deployment Guide
 
-This guide will help you deploy the Image to 3D Generator so it's fully working on GitHub Pages.
+This guide will help you deploy Allspace (Floor Plan to 3D Model Converter) to Render. The Flask backend serves the frontend (`index.html`) at `/`, so deploying the backend deploys the whole app.
 
 ## Architecture
 
@@ -38,8 +38,8 @@ User Browser → GitHub Pages (Frontend) → Render API (Backend) → Returns 3D
    - Note your API URL: `https://image-to-3d-api-xxxx.onrender.com`
 
 5. **Test Backend**
-   - Visit your URL in browser
-   - You should see: `{"status": "online", "service": "Image to 3D Environment Generator", ...}`
+   - Visit your URL in a browser
+   - You should see the Allspace web interface (Flask serves `index.html` at `/`)
 
 ## Step 2: Update Frontend to Use Deployed Backend
 
@@ -120,9 +120,9 @@ The backend is already configured with Flask-CORS to accept requests from any or
   - Use smaller images
   - Upgrade to paid tier ($7/month)
 
-### First Generation Slow
-- **Cause**: MiDaS model downloads on first use (~100MB)
-- **Solution**: Wait for initial download, subsequent requests are faster
+### First Request Slow After Idle
+- **Cause**: On Render's free tier the service sleeps after ~15 min of inactivity; the first request wakes it up.
+- **Solution**: Wait a few seconds for it to wake; subsequent requests are immediate. (There is no model download — the pipeline is pure CPU OpenCV.)
 
 ### Backend Goes to Sleep
 - **Cause**: Render free tier spins down after 15 min inactivity

@@ -17,7 +17,8 @@ class MeshGenerator:
         print("🔧 Initializing Mesh Generator (trimesh-based)")
 
     def create_mesh_from_depth(self, image_path, depth_map, confidence_map=None,
-                               scene_type=None, scale_factor_x=1.0, scale_factor_z=1.0):
+                               scene_type=None, scale_factor_x=1.0, scale_factor_z=1.0,
+                               complexity="medium", generate_interiors=True):
         """
         Create a 3D mesh from image and depth map
 
@@ -53,7 +54,9 @@ class MeshGenerator:
                 print("  🏗️  Floor plan - using architectural wall extrusion")
                 mesh = self._architectural_mesh(depth_map, image, width, height,
                                                 scale_factor_x=scale_factor_x,
-                                                scale_factor_z=scale_factor_z)
+                                                scale_factor_z=scale_factor_z,
+                                                complexity=complexity,
+                                                generate_interiors=generate_interiors)
             else:
                 # Heuristic fallback for scenes whose type isn't propagated
                 low_depth  = np.sum((depth_map >= 0.0) & (depth_map < 0.2)) / depth_map.size
@@ -62,7 +65,9 @@ class MeshGenerator:
                     print("  🏗️  Floor plan heuristic - architectural wall extrusion")
                     mesh = self._architectural_mesh(depth_map, image, width, height,
                                                     scale_factor_x=scale_factor_x,
-                                                    scale_factor_z=scale_factor_z)
+                                                    scale_factor_z=scale_factor_z,
+                                                    complexity=complexity,
+                                                    generate_interiors=generate_interiors)
                 else:
                     print("  📸 Photo mode - heightmap mesh with UV texture")
                     mesh = self._depth_to_mesh(
@@ -380,7 +385,8 @@ class MeshGenerator:
         return scene
 
     def _architectural_mesh(self, depth_map, image, width, height,
-                             scale_factor_x=1.0, scale_factor_z=1.0):
+                             scale_factor_x=1.0, scale_factor_z=1.0,
+                             complexity="medium", generate_interiors=True):
         """
         Create architectural 3D mesh with proper wall extrusion
         Walls are vertical faces, floors are horizontal planes
@@ -389,20 +395,33 @@ class MeshGenerator:
             depth_map: Binary-like depth (0=floor, 1=wall)
             image: RGB image for colors
             width, height: Dimensions
+            complexity: "low" | "medium" | "high" — controls working resolution
+                        and contour simplification (more detail = finer walls)
+            generate_interiors: when True, build per-room colour-coded floors;
+                        when False, a single plain floor slab is used
 
         Returns:
             mesh: Trimesh object with architectural geometry
         """
-        # Downsample moderately to preserve architectural detail
-        # Use INTER_AREA for correct area-averaging (no stride aliasing)
+        # Complexity → working-resolution cap and contour-simplification factor.
+        # Higher complexity keeps more wall detail; lower is faster / coarser.
+        complexity = (complexity or "medium").lower()
+        res_cap = {"low": 768, "medium": 1024, "high": 1536}.get(complexity, 1024)
+        eps_factor = {"low": 0.004, "medium": 0.002, "high": 0.001}.get(complexity, 0.002)
+
+        # Only downsample when the source exceeds the complexity cap. The depth
+        # estimator already caps at 1024, so at medium/high this branch usually
+        # leaves the wall mask untouched (no thin-wall erosion from re-resizing).
+        # Use INTER_NEAREST so the binary wall mask keeps crisp 1px walls instead
+        # of INTER_AREA averaging them below the 0.5 threshold and deleting them.
         max_dimension = max(width, height)
 
-        if max_dimension > 800:
-            target_dim = 640
+        if max_dimension > res_cap:
+            target_dim = res_cap
             tw = int(width * target_dim / max_dimension)
             th = int(height * target_dim / max_dimension)
-            print(f"  🔽 Downsampling for wall detection: {width}x{height} → {tw}x{th} (INTER_AREA)")
-            depth_map_small = cv2.resize(depth_map, (tw, th), interpolation=cv2.INTER_AREA)
+            print(f"  🔽 Downsampling for wall detection: {width}x{height} → {tw}x{th} (INTER_NEAREST)")
+            depth_map_small = cv2.resize(depth_map, (tw, th), interpolation=cv2.INTER_NEAREST)
             image_small = cv2.resize(image, (tw, th), interpolation=cv2.INTER_AREA)
             h_small, w_small = th, tw
         else:
@@ -430,11 +449,27 @@ class MeshGenerator:
               f"scale=({scale_factor_x:.2f}, {scale_factor_z:.2f})")
 
         # Map pixel coordinates to 3D world space.
-        # Base range is -1..1 (2 units), then multiplied by scale_factor for real metres.
-        scale_x = 2.0 / w_small * scale_factor_x
-        scale_z = 2.0 / h_small * scale_factor_z
-        offset_x = -1.0 * scale_factor_x
-        offset_z = -1.0 * scale_factor_z
+        if has_real_scale:
+            # Real-world metres: scale_factor_{x,z} already encode the drawing's
+            # true width/height (derived from the source pixel aspect in app.py),
+            # so independent x/z scaling here is correct and aspect-faithful.
+            scale_x = 2.0 / w_small * scale_factor_x
+            scale_z = 2.0 / h_small * scale_factor_z
+            offset_x = -1.0 * scale_factor_x
+            offset_z = -1.0 * scale_factor_z
+            half_x = scale_factor_x
+            half_z = scale_factor_z
+        else:
+            # Normalized mode: use ONE uniform scale so the plan's real aspect
+            # ratio is preserved. Previously x used 2/w and z used 2/h
+            # independently, which squashed every plan into a 2x2 square (a wide
+            # plan came out square). Longest side now spans 2 units, centred.
+            uniform = 2.0 / max(w_small, h_small)
+            scale_x = scale_z = uniform
+            half_x = w_small * uniform / 2.0
+            half_z = h_small * uniform / 2.0
+            offset_x = -half_x
+            offset_z = -half_z
 
         vertices = []
         faces = []
@@ -488,7 +523,7 @@ class MeshGenerator:
             if perimeter < min_contour_perimeter:
                 continue
 
-            epsilon = 0.002 * perimeter
+            epsilon = eps_factor * perimeter
             approx = cv2.approxPolyDP(contour, epsilon, True)
 
             if len(approx) < 3:
@@ -552,17 +587,21 @@ class MeshGenerator:
             )
             if contours_retry:
                 depth_retry = wall_mask_retry.astype(np.float32) / 255.0
-                img_retry = image_small if max_dimension > 800 else image
+                img_retry = image_small if max_dimension > res_cap else image
                 return self._architectural_mesh(depth_retry, img_retry, w_small, h_small,
-                                               scale_factor_x, scale_factor_z)
+                                               scale_factor_x, scale_factor_z,
+                                               complexity, generate_interiors)
             print("  ⚠️  Still no walls — falling back to depth heightmap")
             return self._depth_to_mesh(depth_map, image, width, height, image_path=None)
 
-        # Room-colored floors — one color per detected room
-        room_data = self._build_room_floors(
-            depth_map_small, h_small, w_small,
-            scale_x, scale_z, offset_x, offset_z, floor_height
-        )
+        # Room-colored floors — one color per detected room (interior detail).
+        # Skipped when the user turns off interior elements; a plain slab is used.
+        room_data = None
+        if generate_interiors:
+            room_data = self._build_room_floors(
+                depth_map_small, h_small, w_small,
+                scale_x, scale_z, offset_x, offset_z, floor_height
+            )
         if room_data is not None:
             rv, rf, rc = room_data
             rf_shifted = rf + vertex_offset
@@ -571,10 +610,9 @@ class MeshGenerator:
             colors.extend(rc.tolist())
             vertex_offset += len(rv)
         else:
-            # Fallback: single warm-beige floor plane
-            fx, fz = scale_factor_x, scale_factor_z
-            vertices.extend([[-fx, floor_height, -fz], [ fx, floor_height, -fz],
-                              [ fx, floor_height,  fz], [-fx, floor_height,  fz]])
+            # Single warm-beige floor slab spanning the (aspect-correct) footprint
+            vertices.extend([[-half_x, floor_height, -half_z], [ half_x, floor_height, -half_z],
+                              [ half_x, floor_height,  half_z], [-half_x, floor_height,  half_z]])
             colors.extend([[230, 215, 190]] * 4)
             b = vertex_offset
             faces.extend([[b, b+1, b+2], [b, b+2, b+3]])

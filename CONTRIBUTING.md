@@ -1,4 +1,4 @@
-# Contributing to Image to 3D Environment Generator
+# Contributing to Allspace — Floor Plan to 3D Model Converter
 
 Thank you for your interest in contributing! This project is completely free and open-source, and we welcome contributions from everyone.
 
@@ -87,7 +87,7 @@ Ideas for contributions:
 - Add more example images
 - Enhance documentation
 - Optimize performance
-- Add new procedural generation rules
+- Improve wall / door / window detection
 - Improve mobile responsiveness
 - Add unit tests
 
@@ -117,11 +117,12 @@ Good documentation is just as important as code:
 
 ## 💡 Ideas for Major Contributions
 
-- Support for additional AI models (Depth Anything, etc.)
-- GPU acceleration
-- Real-time preview during generation
+- More robust wall detection (line/centerline geometry, support for multiple drawing styles, colors, and DPIs)
+- Distinguish non-wall symbols (text, dimensions, furniture, door swings) from walls
+- Derive real scale automatically from a drawing's scale bar or dimension annotations
+- Better door/window detection from drawn symbols (instead of pixel brightness)
+- Real FBX export (needs an external converter — the app currently exports GLB + OBJ)
 - Advanced mesh optimization
-- Texture synthesis for unseen areas
 - Batch processing
 - Unity/Unreal plugins
 - Mobile app

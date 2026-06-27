@@ -13,14 +13,12 @@ def test_imports():
     packages = {
         'flask': 'Flask',
         'flask_cors': 'Flask-CORS',
-        'torch': 'PyTorch',
-        'torchvision': 'TorchVision',
         'cv2': 'OpenCV',
         'PIL': 'Pillow',
-        'open3d': 'Open3D',
         'trimesh': 'Trimesh',
         'numpy': 'NumPy',
         'scipy': 'SciPy',
+        'networkx': 'NetworkX',
     }
     
     failed = []
@@ -57,34 +55,16 @@ def test_directories():
     
     print("✅ Directory check complete!")
 
-def test_torch():
-    """Test PyTorch configuration"""
-    print("\n🔥 Testing PyTorch...")
-    
-    import torch
-    
-    print(f"  PyTorch version: {torch.__version__}")
-    print(f"  CUDA available: {torch.cuda.is_available()}")
-    
-    if torch.cuda.is_available():
-        print(f"  CUDA version: {torch.version.cuda}")
-        print(f"  GPU: {torch.cuda.get_device_name(0)}")
-    else:
-        print("  Running on CPU (this is fine for development)")
-    
-    print("✅ PyTorch configured!")
-
 def main():
     print("=" * 50)
-    print("Image to 3D Generator - Setup Verification")
+    print("Allspace - Setup Verification")
     print("=" * 50)
-    
+
     if not test_imports():
         sys.exit(1)
-    
+
     test_directories()
-    test_torch()
-    
+
     print("\n" + "=" * 50)
     print("🎉 Setup verification complete!")
     print("=" * 50)

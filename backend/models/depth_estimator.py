@@ -42,8 +42,12 @@ class DepthEstimator:
             if img is None:
                 raise ValueError(f"Could not load image: {image_path}")
 
-            # Keep good quality for clean appearance
-            max_dim = 640
+            # Keep good quality for clean appearance.
+            # 1024 (was 640): thin CAD wall lines are ~1-2px in the source and
+            # become sub-pixel — i.e. disappear — when shrunk to 640 before wall
+            # detection runs. 1024 preserves them while staying memory-light
+            # (binary morphology on 1024px is still well under the 512MB budget).
+            max_dim = 1024
             height, width = img.shape[:2]
             if max(height, width) > max_dim:
                 scale = max_dim / max(height, width)

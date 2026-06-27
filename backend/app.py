@@ -106,7 +106,7 @@ def index():
 def download_model(job_id, format):
     """
     Download generated 3D model
-    format: 'glb' or 'fbx'
+    format: 'glb' or 'obj'
     """
     try:
         # Validate job
@@ -119,8 +119,8 @@ def download_model(job_id, format):
             return jsonify({'error': f'Job is {job["status"]}, not completed'}), 400
 
         # Validate format
-        if format.lower() not in ['glb', 'fbx']:
-            return jsonify({'error': 'Invalid format. Use glb or fbx'}), 400
+        if format.lower() not in ['glb', 'obj']:
+            return jsonify({'error': 'Invalid format. Use glb or obj'}), 400
 
         # Get file path
         filename = job['output_files'].get(format.lower())
@@ -138,14 +138,14 @@ def download_model(job_id, format):
         print(f"  📥 Downloading {format.upper()}: {filepath} ({file_size} bytes)")
 
         # Determine MIME type
-        mime_type = 'model/gltf-binary' if format.lower() == 'glb' else 'application/octet-stream'
+        mime_type = 'model/gltf-binary' if format.lower() == 'glb' else 'text/plain'
 
         # Send file with proper chunking for large files
         return send_file(
             filepath,
             mimetype=mime_type,
             as_attachment=True,
-            download_name=f"generated_3d_environment.{format.lower()}",
+            download_name=f"allspace_model.{format.lower()}",
             conditional=False,  # Disable conditional responses
             etag=False  # Disable etag caching
         )
@@ -203,14 +203,19 @@ def generate_combined():
 
         base_mesh, image_data = mesh_generator.create_mesh_from_depth(
             filepath, depth_map, confidence_map, scene_type=scene_type,
-            scale_factor_x=scale_factor_x, scale_factor_z=scale_factor_z
+            scale_factor_x=scale_factor_x, scale_factor_z=scale_factor_z,
+            complexity=options['room_complexity'],
+            generate_interiors=options['generate_interiors'],
         )
 
         glb_path = os.path.join(app.config['OUTPUT_FOLDER'], f"{job_id}.glb")
         model_exporter.export_glb(base_mesh, glb_path, image_data)
 
-        fbx_path = os.path.join(app.config['OUTPUT_FOLDER'], f"{job_id}.fbx")
-        model_exporter.export_fbx(base_mesh, fbx_path, image_data)
+        # OBJ is the engine-friendly secondary format. trimesh cannot write FBX,
+        # so the previous .fbx output was always a broken/empty link; OBJ imports
+        # cleanly into Unity, Unreal and Blender.
+        obj_path = os.path.join(app.config['OUTPUT_FOLDER'], f"{job_id}.obj")
+        model_exporter.export_obj(base_mesh, obj_path, image_data)
 
         generation_jobs[job_id] = {
             'status': 'completed',
@@ -219,19 +224,19 @@ def generate_combined():
             'created_at': datetime.now().isoformat(),
             'completed_at': datetime.now().isoformat(),
             'progress': 100,
-            'output_files': {'glb': f"{job_id}.glb", 'fbx': f"{job_id}.fbx"}
+            'output_files': {'glb': f"{job_id}.glb", 'obj': f"{job_id}.obj"}
         }
 
         base_url = request.host_url.rstrip('/')
         glb_url = f"{base_url}/api/download/{job_id}/glb"
-        fbx_url = f"{base_url}/api/download/{job_id}/fbx"
+        obj_url = f"{base_url}/api/download/{job_id}/obj"
 
         return jsonify({
             'success': True,
             'job_id': job_id,
             'model_url': glb_url,
             'glb_url': glb_url,
-            'fbx_url': fbx_url,
+            'obj_url': obj_url,
         }), 200
 
     except Exception as e:
@@ -252,10 +257,10 @@ def internal_server_error(error):
 
 
 if __name__ == '__main__':
-    print("🚀 Starting Image to 3D Environment Generator API")
+    print("🚀 Starting Allspace — Floor Plan to 3D Model Converter")
     print(f"📁 Upload folder: {os.path.abspath(UPLOAD_FOLDER)}")
     print(f"📁 Output folder: {os.path.abspath(OUTPUT_FOLDER)}")
-    print(f"🤖 AI models loaded and ready")
+    print(f"🧰 Classical-CV pipeline ready (OpenCV + trimesh, no model download)")
     print(f"🌐 API running on http://0.0.0.0:5000")
 
     # Run Flask app
